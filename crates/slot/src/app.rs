@@ -667,7 +667,11 @@ impl App {
             QuickRow::Turbo => Some(QuickValue::flag(self.state.turbo)),
             QuickRow::Rewind => Some(QuickValue::flag(self.state.rewind)),
             QuickRow::StartOnBoot => Some(QuickValue::flag(self.start_on_boot)),
-            QuickRow::DateTime | QuickRow::About | QuickRow::Screen | QuickRow::Game => None,
+            QuickRow::DateTime
+            | QuickRow::About
+            | QuickRow::Screen
+            | QuickRow::Game
+            | QuickRow::Exit => None,
         }
     }
 
@@ -1360,6 +1364,7 @@ impl App {
                 self.phase = clock_screen(self.utc_secs(), self.state.utc_offset_min, true);
             }
             QuickRow::About => self.phase = Phase::About,
+            QuickRow::Exit => self.begin_exit(),
             QuickRow::Screen | QuickRow::Game => {
                 if let Some(row) = row.child() {
                     self.phase = Phase::QuickMenu { row };
@@ -1420,7 +1425,8 @@ impl App {
             | QuickRow::About
             | QuickRow::Screen
             | QuickRow::Game
-            | QuickRow::StartOnBoot => return,
+            | QuickRow::StartOnBoot
+            | QuickRow::Exit => return,
         }
         self.persist();
     }
@@ -2664,10 +2670,7 @@ impl App {
                 self.power_menu = None;
                 self.close_game_menu();
                 match PowerChoice::ALL[index] {
-                    PowerChoice::Exit => {
-                        self.exiting = true;
-                        self.act_at = self.now() + SHUTDOWN_SHOW_MS;
-                    }
+                    PowerChoice::Exit => self.begin_exit(),
                     PowerChoice::Restart => {
                         self.restarting = true;
                         self.act_at = self.now() + SHUTDOWN_SHOW_MS;
@@ -3029,6 +3032,18 @@ impl App {
         if let Err(e) = slot_store::write_selected_core(&root, &cart.stem, core) {
             eprintln!("slot: core: could not write selected_core.txt: {e}");
         }
+    }
+
+    fn begin_exit(&mut self) {
+        if self.exiting {
+            return;
+        }
+        if self.link_active() {
+            self.end_link();
+        }
+        self.flush_resume();
+        self.exiting = true;
+        self.act_at = self.now() + SHUTDOWN_SHOW_MS;
     }
 
     fn begin_power_off(&mut self) {

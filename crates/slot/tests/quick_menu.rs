@@ -112,7 +112,7 @@ fn up_and_down_move_the_bar_and_wrap_at_the_ends() {
     press(&mut a, Btn::Up);
     assert_eq!(
         a.quick_menu(),
-        Some(QuickRow::About),
+        Some(QuickRow::Exit),
         "up from the top did not wrap to the bottom"
     );
     for want in [
@@ -120,6 +120,7 @@ fn up_and_down_move_the_bar_and_wrap_at_the_ends() {
         QuickRow::Game,
         QuickRow::DateTime,
         QuickRow::About,
+        QuickRow::Exit,
         QuickRow::Screen,
     ] {
         press(&mut a, Btn::Down);
@@ -655,4 +656,16 @@ fn start_on_boot_stays_off_when_the_app_has_no_boot_script() {
 fn start_on_boot_is_the_last_gameplay_row() {
     assert_eq!(QuickRow::GAME.last(), Some(&QuickRow::StartOnBoot));
     assert_eq!(QuickRow::StartOnBoot.label(), "Start on Boot");
+}
+
+#[test]
+fn exit_to_menu_is_the_last_main_row_and_leaves_like_the_power_menu() {
+    assert_eq!(QuickRow::MAIN.last(), Some(&QuickRow::Exit));
+    assert_eq!(QuickRow::Exit.label(), "Exit to Menu");
+    let (_d, mut a, _) = on_carousel();
+    open_at(&mut a, QuickRow::Exit);
+    assert_eq!(a.quick_value(QuickRow::Exit), None);
+    press(&mut a, Btn::A);
+    assert!(a.exiting(), "A on Exit to Menu did not start leaving");
+    assert!(!a.ready_to_exit(), "the exit screen shows before slot goes");
 }

@@ -21,10 +21,11 @@ pub enum QuickRow {
     Rewind,
     GbPalettes,
     StartOnBoot,
+    Exit,
 }
 
 impl QuickRow {
-    pub const ALL: [QuickRow; 15] = [
+    pub const ALL: [QuickRow; 16] = [
         QuickRow::FastForward,
         QuickRow::FastForwardSound,
         QuickRow::Screen,
@@ -40,13 +41,15 @@ impl QuickRow {
         QuickRow::Rewind,
         QuickRow::GbPalettes,
         QuickRow::StartOnBoot,
+        QuickRow::Exit,
     ];
 
-    pub const MAIN: [QuickRow; 4] = [
+    pub const MAIN: [QuickRow; 5] = [
         QuickRow::Screen,
         QuickRow::Game,
         QuickRow::DateTime,
         QuickRow::About,
+        QuickRow::Exit,
     ];
 
     pub const SCREEN: [QuickRow; 4] = [
@@ -124,13 +127,18 @@ impl QuickRow {
             QuickRow::Rewind => "Rewind",
             QuickRow::GbPalettes => "GB Palettes",
             QuickRow::StartOnBoot => "Start on Boot",
+            QuickRow::Exit => "Exit to Menu",
         }
     }
 
     pub fn opens(self) -> bool {
         matches!(
             self,
-            QuickRow::DateTime | QuickRow::About | QuickRow::Screen | QuickRow::Game
+            QuickRow::DateTime
+                | QuickRow::About
+                | QuickRow::Screen
+                | QuickRow::Game
+                | QuickRow::Exit
         )
     }
 
