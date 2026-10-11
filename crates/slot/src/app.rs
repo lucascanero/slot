@@ -296,6 +296,7 @@ pub struct App {
     link_transport: Option<(u16, Box<dyn LinkChannel>)>,
     restarting: bool,
     exiting: bool,
+    start_on_boot: bool,
     act_at: Millis,
     root: Option<PathBuf>,
     state: SlotState,
@@ -422,6 +423,7 @@ impl App {
             link_transport: None,
             restarting: false,
             exiting: false,
+            start_on_boot: false,
             act_at: 0,
             root: None,
             state: SlotState::default(),
@@ -484,6 +486,8 @@ impl App {
         crate::boot_time::mark("scan");
         let mut app = App::new(carts);
         app.root = Some(root.to_path_buf());
+        app.start_on_boot =
+            slot_store::BootHook::for_layout(&slot_store::Layout::for_root(root)).installed();
         app.state = read_slot_state(root);
         if app.state.clock_set {
             app.start();
@@ -662,6 +666,7 @@ impl App {
             QuickRow::EjectSave => Some(QuickValue::flag(self.state.eject_save)),
             QuickRow::Turbo => Some(QuickValue::flag(self.state.turbo)),
             QuickRow::Rewind => Some(QuickValue::flag(self.state.rewind)),
+            QuickRow::StartOnBoot => Some(QuickValue::flag(self.start_on_boot)),
             QuickRow::DateTime | QuickRow::About | QuickRow::Screen | QuickRow::Game => None,
         }
     }
@@ -1369,11 +1374,15 @@ impl App {
             | QuickRow::GbaShader
             | QuickRow::GbShader
             | QuickRow::GbPalettes
+            | QuickRow::StartOnBoot
             | QuickRow::Rumble => {}
         }
     }
 
     fn change_setting(&mut self, row: QuickRow, right: bool) {
+        if row == QuickRow::StartOnBoot {
+            return self.toggle_start_on_boot();
+        }
         let s = &mut self.state;
         match row {
             QuickRow::FastForward => {
@@ -1407,9 +1416,24 @@ impl App {
             QuickRow::Turbo => s.turbo = !s.turbo,
             QuickRow::Rewind => s.rewind = !s.rewind,
             QuickRow::GbPalettes => s.gb_palettes = !s.gb_palettes,
-            QuickRow::DateTime | QuickRow::About | QuickRow::Screen | QuickRow::Game => return,
+            QuickRow::DateTime
+            | QuickRow::About
+            | QuickRow::Screen
+            | QuickRow::Game
+            | QuickRow::StartOnBoot => return,
         }
         self.persist();
+    }
+
+    fn toggle_start_on_boot(&mut self) {
+        let Some(root) = self.root.clone() else {
+            return;
+        };
+        let hook = slot_store::BootHook::for_layout(&slot_store::Layout::for_root(&root));
+        if let Err(e) = hook.set(!self.start_on_boot) {
+            eprintln!("slot: start on boot: {e}");
+        }
+        self.start_on_boot = hook.installed();
     }
 
     pub fn apply_at(&mut self, action: Action, now: Millis) {

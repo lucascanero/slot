@@ -625,3 +625,34 @@ fn gb_palettes_flips_on_either_arrow_and_saves() {
         );
     }
 }
+
+#[test]
+fn start_on_boot_installs_and_removes_the_boot_script() {
+    let (d, mut a, _) = on_carousel();
+    let layout = slot_store::Layout::flat(d.path());
+    std::fs::create_dir_all(layout.boot_script().parent().unwrap()).unwrap();
+    std::fs::write(layout.boot_script(), "#!/bin/sh\n").unwrap();
+    open_at(&mut a, QuickRow::StartOnBoot);
+    assert_eq!(a.quick_value(QuickRow::StartOnBoot), Some(QuickValue::Off));
+    press(&mut a, Btn::Right);
+    assert_eq!(a.quick_value(QuickRow::StartOnBoot), Some(QuickValue::On));
+    assert!(layout.boot_hook().is_file());
+    press(&mut a, Btn::Right);
+    assert_eq!(a.quick_value(QuickRow::StartOnBoot), Some(QuickValue::Off));
+    assert!(!layout.boot_hook().exists());
+}
+
+#[test]
+fn start_on_boot_stays_off_when_the_app_has_no_boot_script() {
+    let (d, mut a, _) = on_carousel();
+    open_at(&mut a, QuickRow::StartOnBoot);
+    press(&mut a, Btn::Right);
+    assert_eq!(a.quick_value(QuickRow::StartOnBoot), Some(QuickValue::Off));
+    assert!(!slot_store::Layout::flat(d.path()).boot_hook().exists());
+}
+
+#[test]
+fn start_on_boot_is_the_last_gameplay_row() {
+    assert_eq!(QuickRow::GAME.last(), Some(&QuickRow::StartOnBoot));
+    assert_eq!(QuickRow::StartOnBoot.label(), "Start on Boot");
+}
