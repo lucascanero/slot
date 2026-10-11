@@ -5,6 +5,13 @@ vars:
   GPSP_HOST: vendor/gpsp_libretro.dylib
   MGBA_COMMIT: e31759b24e7a4e3899285ff720d7b573ac328ae7
   GPSP_COMMIT: 7b2dd37394e2822110cacef321e9bb291a305b77
+  BRICK_GLIBC: '2.31'
+  BRICK_TARGET: aarch64-unknown-linux-gnu
+  BRICK_BIN: target-device/aarch64-unknown-linux-gnu/device/slot
+  CROSS: >-
+    BRICK_GLIBC={{.BRICK_GLIBC}}
+    SLOT_CROSS_CC=$PWD/tools/zig/aarch64-cc SLOT_CROSS_CXX=$PWD/tools/zig/aarch64-c++
+    SLOT_CROSS_AR=$PWD/tools/zig/aarch64-ar SLOT_CROSS_RANLIB=$PWD/tools/zig/aarch64-ranlib
 
 tasks:
   default:
@@ -180,58 +187,47 @@ tasks:
     cmds:
       - cargo run -p slot
 
-  dist:
-    desc: Build the copy-to-SD2 tree, OUT defaults to ./dist
-    deps: [core, release]
-    vars:
-      OUT: '{{.OUT | default "dist"}}'
+  build:device:
+    desc: Build slot for the TrimUI Brick with cargo-zigbuild, against glibc {{.BRICK_GLIBC}}
     cmds:
-      - rm -rf {{.OUT}}
-      - ./target/release/slot --init-root {{.OUT}}
-      - cp target/release/slot {{.OUT}}/System/slot
-      - cp {{.CORE}} {{.GPSP_HOST}} {{.OUT}}/System/
-      - 'echo "dist ready at {{.OUT}}, copy its contents to SD2"'
+      - >-
+        cargo zigbuild --profile device --target-dir target-device
+        --target {{.BRICK_TARGET}}.{{.BRICK_GLIBC}}
+        -p slot --no-default-features --features device
+      - file {{.BRICK_BIN}} | grep -q aarch64
+      - sh tools/glibc-floor.sh {{.BRICK_BIN}} {{.BRICK_GLIBC}}
 
   core:device:
-    desc: Build the aarch64 linux mgba core for the device bundle, in the box the device build uses
+    desc: Cross-build the mGBA core for the Brick with zig
     status:
       - test -f vendor/mgba_libretro.so
       - test "$(cat vendor/mgba_libretro.so.meta 2>/dev/null)" = "$(sh cores/mgba/build.sh stamp {{.MGBA_COMMIT}})"
     cmds:
-      - task: device:sh
-        vars:
-          CMD: sh cores/mgba/build.sh build {{.MGBA_COMMIT}} target-device/mgba vendor/mgba_libretro.so
+      - '{{.CROSS}} sh cores/mgba/build.sh build {{.MGBA_COMMIT}} target-device/mgba vendor/mgba_libretro.so'
       - file vendor/mgba_libretro.so | grep -q aarch64
-      - 'echo "built vendor/mgba_libretro.so"'
+      - sh tools/glibc-floor.sh vendor/mgba_libretro.so {{.BRICK_GLIBC}}
 
   core:gpsp:
     desc: >-
-      Build the aarch64 linux gpSP core from its pinned source archive, which ships beside it
+      Cross-build the gpSP core for the Brick from its pinned source archive, which ships beside it
       as its GPL-2.0 section 3(a) corresponding source
     status:
       - test -f vendor/gpsp_libretro.so
       - test -f vendor/gpsp-src.tar.gz
       - test "$(cat vendor/gpsp-src.sha 2>/dev/null)" = "{{.GPSP_COMMIT}}"
       - test "$(cat vendor/gpsp_libretro.so.meta 2>/dev/null)" = "$(sh cores/gpsp/build.sh stamp {{.GPSP_COMMIT}})"
-      - test "$(cat vendor/gpsp-src.meta 2>/dev/null)" = "$(sh cores/gpsp/build.sh stamp {{.GPSP_COMMIT}})"
     cmds:
       - |
         set -euo pipefail
         mkdir -p vendor
-        rm -f vendor/gpsp_libretro.so vendor/gpsp_libretro.so.meta \
-              vendor/gpsp-src.tar.gz vendor/gpsp-src.sha vendor/gpsp-src.meta
-        curl -fsSL -o vendor/gpsp-src.tar.gz \
-          "https://github.com/libretro/gpsp/archive/{{.GPSP_COMMIT}}.tar.gz"
+        rm -f vendor/gpsp_libretro.so vendor/gpsp_libretro.so.meta vendor/gpsp-src.tar.gz vendor/gpsp-src.sha vendor/gpsp-src.meta
+        curl -fsSL -o vendor/gpsp-src.tar.gz "https://github.com/libretro/gpsp/archive/{{.GPSP_COMMIT}}.tar.gz"
         tar -tzf vendor/gpsp-src.tar.gz | grep "^gpsp-{{.GPSP_COMMIT}}/Makefile$" > /dev/null
-      - task: device:sh
-        vars:
-          CMD: >-
-            sh cores/gpsp/build.sh build {{.GPSP_COMMIT}} vendor/gpsp-src.tar.gz
-            target-device/gpsp vendor/gpsp_libretro.so
+      - '{{.CROSS}} sh cores/gpsp/build.sh build {{.GPSP_COMMIT}} vendor/gpsp-src.tar.gz target-device/gpsp vendor/gpsp_libretro.so'
       - file vendor/gpsp_libretro.so | grep -q aarch64
+      - sh tools/glibc-floor.sh vendor/gpsp_libretro.so {{.BRICK_GLIBC}}
       - echo "{{.GPSP_COMMIT}}" > vendor/gpsp-src.sha
       - cp vendor/gpsp_libretro.so.meta vendor/gpsp-src.meta
-      - 'echo "built vendor/gpsp_libretro.so from vendor/gpsp-src.tar.gz @ {{.GPSP_COMMIT}}"'
 
   core:gpsp:update:
     desc: Refetch gpSP's source archive and rebuild the core from it, even if the set is current
@@ -247,119 +243,85 @@ tasks:
     cmds:
       - sh cores/gpsp/test/run.sh vendor/gpsp-src.tar.gz
 
-  device:sh:
-    desc: Run CMD on the box the device build wants, fetching one if this is not it
-    internal: true
-    requires:
-      vars: [CMD]
-    cmds:
-      - |
-        set -eu
-        if [ "$(uname -s)-$(uname -m)" = "Linux-aarch64" ]; then
-          sh -c '{{.CMD}}'
-        else
-          docker run --rm -v "$PWD":/src -w /src rust:1-bullseye sh -c '{{.CMD}}'
-        fi
-
-  build:device:
-    desc: Build for the H700, in an arm64 container unless this is already one
-    cmds:
-      - task: device:sh
-        vars:
-          CMD: >-
-            cargo build --profile device --target-dir target-device
-            -p slot --no-default-features --features device
-      - file target-device/device/slot | grep -q aarch64
-      - 'echo "built target-device/device/slot"'
-
   bench:device:
-    desc: Build core_bench, slot-retro's headless core benchmark, for the H700. It never ships
+    desc: Build core_bench for the Brick. It never ships
     cmds:
-      - task: device:sh
-        vars:
-          CMD: >-
-            cargo build --profile device --target-dir target-device
-            -p slot-retro --example core_bench
-      - file target-device/device/examples/core_bench | grep -q aarch64
-      - 'echo "built target-device/device/examples/core_bench, adb push it to /tmp/core_bench"'
+      - >-
+        cargo zigbuild --profile device --target-dir target-device
+        --target {{.BRICK_TARGET}}.{{.BRICK_GLIBC}} -p slot-retro --example core_bench
 
   dist:device:
-    desc: Build the SD2 tree for an H700 device, OUT defaults to ./dist-device
+    desc: Build the Brick SD tree, OUT defaults to ./dist-brick. Copy its contents to the SD card root
     deps: [core:device, core:gpsp, build:device]
     vars:
-      OUT: '{{.OUT | default "dist-device"}}'
+      OUT: '{{.OUT | default "dist-brick"}}'
     cmds:
       - rm -rf {{.OUT}}
-      - task: device:sh
-        vars:
-          CMD: ./target-device/device/slot --init-root {{.OUT}}
-      - cp target-device/device/slot {{.OUT}}/System/slot
-      - cp -R card/System/* {{.OUT}}/System/
-      - file vendor/mgba_libretro.so | grep -q aarch64
-      - file vendor/gpsp_libretro.so | grep -q aarch64
-      - cp vendor/mgba_libretro.so {{.OUT}}/System/
-      - cp vendor/gpsp_libretro.so {{.OUT}}/System/
-      - cp -r licenses {{.OUT}}/System/licenses
+      - cargo run -q -p slot -- --init-sd {{.OUT}}
+      - mkdir -p {{.OUT}}/Apps/Slot
+      - cp -R card/Apps/Slot/. {{.OUT}}/Apps/Slot/
+      - cp {{.BRICK_BIN}} {{.OUT}}/Apps/Slot/slot
+      - cp vendor/mgba_libretro.so vendor/gpsp_libretro.so {{.OUT}}/Apps/Slot/
+      - cp -r licenses {{.OUT}}/Apps/Slot/licenses
       - |
         set -euo pipefail
         sha="$(cat vendor/gpsp-src.sha)"
-        cp vendor/gpsp-src.tar.gz "{{.OUT}}/System/licenses/gpsp-${sha}.tar.gz"
-        cp vendor/gpsp-src.meta "{{.OUT}}/System/licenses/gpsp-${sha}.meta"
-        for p in cores/gpsp/*.patch; do
-          cp "$p" "{{.OUT}}/System/licenses/gpsp-$(basename "$p")"
-        done
-      - |
-        set -euo pipefail
+        cp vendor/gpsp-src.tar.gz "{{.OUT}}/Apps/Slot/licenses/gpsp-${sha}.tar.gz"
+        cp vendor/gpsp-src.meta "{{.OUT}}/Apps/Slot/licenses/gpsp-${sha}.meta"
+        for p in cores/gpsp/*.patch; do cp "$p" "{{.OUT}}/Apps/Slot/licenses/gpsp-$(basename "$p")"; done
         commit="$(grep '^commit=' vendor/mgba_libretro.so.meta | cut -d= -f2)"
-        cp vendor/mgba_libretro.so.meta "{{.OUT}}/System/licenses/mgba-${commit}.meta"
-        for p in cores/mgba/*.patch; do
-          cp "$p" "{{.OUT}}/System/licenses/mgba-$(basename "$p")"
-        done
-      - 'echo "device tree ready at {{.OUT}}, copy its contents to SD2"'
+        cp vendor/mgba_libretro.so.meta "{{.OUT}}/Apps/Slot/licenses/mgba-${commit}.meta"
+        for p in cores/mgba/*.patch; do cp "$p" "{{.OUT}}/Apps/Slot/licenses/mgba-$(basename "$p")"; done
+      - 'echo "Brick tree ready at {{.OUT}}: copy Apps/ and Slot/ to the root of the SD card"'
 
   deploy:device:
-    desc: Build and push onto a device over adb, then restart it. SD defaults to /mnt/sdcard
-    deps: [core:device, core:gpsp, build:device]
-    vars:
-      SD: '{{.SD | default "/mnt/sdcard"}}'
+    desc: Push the Brick build over SSH. BRICK=root@<ip>; BrickTools' SSH password is tina
+    requires:
+      vars: [BRICK]
+    deps: [dist:device]
+    cmds:
+      - >-
+        tar -C dist-brick -cf - Apps/Slot | ssh {{.BRICK}}
+        'tar -C /mnt/SDCARD -xf - && chmod +x /mnt/SDCARD/Apps/Slot/slot /mnt/SDCARD/Apps/Slot/*.sh
+        /mnt/SDCARD/Apps/Slot/boot/*.sh && mkdir -p /mnt/SDCARD/Slot && sync'
+      - 'echo "deployed; open Apps > Slot on the Brick, then task log:device BRICK={{.BRICK}}"'
+
+  deploy:adb:
+    desc: Push the Brick build over adb
+    deps: [dist:device]
     cmds:
       - adb wait-for-device
-      - file vendor/mgba_libretro.so | grep -q aarch64
-      - file vendor/gpsp_libretro.so | grep -q aarch64
-      - adb push target-device/device/slot '{{.SD}}/System/slot'
-      - for f in card/System/*; do adb push "$f" '{{.SD}}/System/'; done
-      - adb push vendor/mgba_libretro.so '{{.SD}}/System/mgba_libretro.so'
-      - adb push vendor/gpsp_libretro.so '{{.SD}}/System/gpsp_libretro.so'
-      - adb push licenses '{{.SD}}/System/'
-      - |
-        set -euo pipefail
-        sha="$(cat vendor/gpsp-src.sha)"
-        adb push vendor/gpsp-src.tar.gz "{{.SD}}/System/licenses/gpsp-${sha}.tar.gz"
-        adb push vendor/gpsp-src.meta "{{.SD}}/System/licenses/gpsp-${sha}.meta"
-        for p in cores/gpsp/*.patch; do
-          adb push "$p" "{{.SD}}/System/licenses/gpsp-$(basename "$p")"
-        done
-      - |
-        set -euo pipefail
-        commit="$(grep '^commit=' vendor/mgba_libretro.so.meta | cut -d= -f2)"
-        adb push vendor/mgba_libretro.so.meta "{{.SD}}/System/licenses/mgba-${commit}.meta"
-        for p in cores/mgba/*.patch; do
-          adb push "$p" "{{.SD}}/System/licenses/mgba-$(basename "$p")"
-        done
-      - adb shell 'chmod +x {{.SD}}/System/slot && sync'
-      - adb reboot
-      - adb wait-for-device
-      - 'echo "deployed to {{.SD}}, device rebooting"'
+      - adb push dist-brick/Apps/Slot /mnt/SDCARD/Apps/
+      - adb shell 'chmod +x /mnt/SDCARD/Apps/Slot/slot /mnt/SDCARD/Apps/Slot/*.sh /mnt/SDCARD/Apps/Slot/boot/*.sh; mkdir -p /mnt/SDCARD/Slot; sync'
 
   log:device:
-    desc: Read slot's log back off a connected device
-    vars:
-      SD: '{{.SD | default "/mnt/sdcard"}}'
+    desc: Read slot's log back off the Brick
+    requires:
+      vars: [BRICK]
     cmds:
-      - adb shell 'cat {{.SD}}/slot.log'
+      - ssh {{.BRICK}} 'cat /mnt/SDCARD/Slot/slot.log'
+
+  sdcard:brick:
+    desc: Make a StockMix-shaped card at ./sdcard-brick for running on this machine
+    deps: [build]
+    cmds:
+      - ./target/debug/slot --init-sd ./sdcard-brick
+      - mkdir -p sdcard-brick/Roms/GBA sdcard-brick/Roms/GB sdcard-brick/Roms/GBC sdcard-brick/BIOS
+      - 'echo "put roms in sdcard-brick/Roms/<GBA|GB|GBC>, then task run:brick"'
+
+  run:brick:
+    desc: >-
+      Run slot on this machine against ./sdcard-brick, laid out like a StockMix card. The host core
+      tasks build macOS dylibs, so on Linux this runs the mock core (a test pattern and a tone)
+    env:
+      SLOT_SD: ./sdcard-brick
+      SLOT_APP: ./card/Apps/Slot
+      SLOT_WINDOW: '1024x768'
+    cmds:
+      - cargo run --release -p slot
 
   clean:
     desc: Remove build output and dist
     cmds:
       - cargo clean
-      - rm -rf dist dist-device target-device
+      - rm -rf dist-brick sdcard-brick target-device

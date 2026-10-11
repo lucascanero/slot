@@ -1,0 +1,9 @@
+#!/bin/sh
+for a in "$@"; do
+	shift
+	case "$a" in
+	-mcpu=*) a="-mcpu=$(printf '%s' "${a#-mcpu=}" | tr '-' '_')" ;;
+	esac
+	set -- "$@" "$a"
+done
+exec zig c++ -target "aarch64-linux-gnu.${BRICK_GLIBC:-2.31}" "$@"

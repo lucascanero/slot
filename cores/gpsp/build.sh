@@ -41,9 +41,16 @@ build() {
 		git -C "$src" apply -p1 "$p"
 	done
 
-	CFLAGS="$device_cflags" make -C "$src" platform=arm64 \
-		GIT_VERSION="\"$(printf %s "$commit" | cut -c1-7)\"" \
-		-j"$(getconf _NPROCESSORS_ONLN)"
+	if [ -n "${SLOT_CROSS_CC:-}" ]; then
+		CFLAGS="$device_cflags" make -C "$src" platform=arm64 \
+			CC="$SLOT_CROSS_CC" CXX="$SLOT_CROSS_CXX" AR="$SLOT_CROSS_AR" \
+			GIT_VERSION="\"$(printf %s "$commit" | cut -c1-7)\"" \
+			-j"$(getconf _NPROCESSORS_ONLN)"
+	else
+		CFLAGS="$device_cflags" make -C "$src" platform=arm64 \
+			GIT_VERSION="\"$(printf %s "$commit" | cut -c1-7)\"" \
+			-j"$(getconf _NPROCESSORS_ONLN)"
+	fi
 
 	mkdir -p "$(dirname "$out")"
 	cp "$src/gpsp_libretro.so" "$out"

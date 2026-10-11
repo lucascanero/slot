@@ -4,6 +4,7 @@ set -eu
 here="$(cd "$(dirname "$0")" && pwd)"
 
 device_cflags="-flto=auto"
+cross_cflags="-O2 -mcpu=cortex-a53"
 
 usage() {
 	echo "usage: $0 stamp COMMIT | build COMMIT WORKDIR OUT" >&2
@@ -19,6 +20,7 @@ stamp() {
 	echo "commit=$1"
 	echo "source=https://github.com/libretro/mgba/tree/$1"
 	echo "device_cflags=$device_cflags"
+	echo "cross_cflags=$cross_cflags"
 	for p in "$here"/*.patch; do
 		echo "patch=$(basename "$p") sha256:$(sha256 "$p")"
 	done
@@ -51,10 +53,15 @@ build() {
 	done
 
 	cflags=""
-	if [ "$(uname -s)-$(uname -m)" = "Linux-aarch64" ]; then
+	cross=""
+	if [ -n "${SLOT_CROSS_CC:-}" ]; then
+		cflags="$cross_cflags"
+		cross="-DCMAKE_SYSTEM_NAME=Linux -DCMAKE_SYSTEM_PROCESSOR=aarch64 -DCMAKE_C_COMPILER=$SLOT_CROSS_CC -DCMAKE_CXX_COMPILER=$SLOT_CROSS_CXX -DCMAKE_AR=$SLOT_CROSS_AR -DCMAKE_RANLIB=$SLOT_CROSS_RANLIB -DCMAKE_FIND_ROOT_PATH=/var/empty -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=ONLY -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=ONLY -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=ONLY"
+	elif [ "$(uname -s)-$(uname -m)" = "Linux-aarch64" ]; then
 		cflags="$device_cflags"
 	fi
-	cmake -S "$src" -B "$obj" -DLIBMGBA_ONLY=ON -DBUILD_LIBRETRO=ON -DCMAKE_BUILD_TYPE=Release \
+	# shellcheck disable=SC2086
+	cmake -S "$src" -B "$obj" $cross -DLIBMGBA_ONLY=ON -DBUILD_LIBRETRO=ON -DCMAKE_BUILD_TYPE=Release \
 		-DCMAKE_C_FLAGS="$cflags" >/dev/null
 	cmake --build "$obj" --target mgba_libretro --parallel "$(getconf _NPROCESSORS_ONLN)" >/dev/null
 
