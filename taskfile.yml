@@ -200,40 +200,40 @@ tasks:
   core:device:
     desc: Cross-build the mGBA core for the Brick with zig
     status:
-      - test -f vendor/mgba_libretro.so
-      - test "$(cat vendor/mgba_libretro.so.meta 2>/dev/null)" = "$(sh cores/mgba/build.sh stamp {{.MGBA_COMMIT}})"
+      - test -f vendor/brick/mgba_libretro.so
+      - test "$(cat vendor/brick/mgba_libretro.so.meta 2>/dev/null)" = "$(sh cores/mgba/build.sh stamp {{.MGBA_COMMIT}})"
     cmds:
-      - '{{.CROSS}} sh cores/mgba/build.sh build {{.MGBA_COMMIT}} target-device/mgba vendor/mgba_libretro.so'
-      - file vendor/mgba_libretro.so | grep -q aarch64
-      - sh tools/glibc-floor.sh vendor/mgba_libretro.so {{.BRICK_GLIBC}}
+      - '{{.CROSS}} sh cores/mgba/build.sh build {{.MGBA_COMMIT}} target-device/mgba vendor/brick/mgba_libretro.so'
+      - file vendor/brick/mgba_libretro.so | grep -q aarch64
+      - sh tools/glibc-floor.sh vendor/brick/mgba_libretro.so {{.BRICK_GLIBC}}
 
   core:gpsp:
     desc: >-
       Cross-build the gpSP core for the Brick from its pinned source archive, which ships beside it
       as its GPL-2.0 section 3(a) corresponding source
     status:
-      - test -f vendor/gpsp_libretro.so
+      - test -f vendor/brick/gpsp_libretro.so
       - test -f vendor/gpsp-src.tar.gz
       - test "$(cat vendor/gpsp-src.sha 2>/dev/null)" = "{{.GPSP_COMMIT}}"
-      - test "$(cat vendor/gpsp_libretro.so.meta 2>/dev/null)" = "$(sh cores/gpsp/build.sh stamp {{.GPSP_COMMIT}})"
+      - test "$(cat vendor/brick/gpsp_libretro.so.meta 2>/dev/null)" = "$(sh cores/gpsp/build.sh stamp {{.GPSP_COMMIT}})"
     cmds:
       - |
         set -euo pipefail
         mkdir -p vendor
-        rm -f vendor/gpsp_libretro.so vendor/gpsp_libretro.so.meta vendor/gpsp-src.tar.gz vendor/gpsp-src.sha vendor/gpsp-src.meta
+        rm -f vendor/brick/gpsp_libretro.so vendor/brick/gpsp_libretro.so.meta vendor/gpsp-src.tar.gz vendor/gpsp-src.sha vendor/gpsp-src.meta
         curl -fsSL -o vendor/gpsp-src.tar.gz "https://github.com/libretro/gpsp/archive/{{.GPSP_COMMIT}}.tar.gz"
         tar -tzf vendor/gpsp-src.tar.gz | grep "^gpsp-{{.GPSP_COMMIT}}/Makefile$" > /dev/null
-      - '{{.CROSS}} sh cores/gpsp/build.sh build {{.GPSP_COMMIT}} vendor/gpsp-src.tar.gz target-device/gpsp vendor/gpsp_libretro.so'
-      - file vendor/gpsp_libretro.so | grep -q aarch64
-      - sh tools/glibc-floor.sh vendor/gpsp_libretro.so {{.BRICK_GLIBC}}
+      - '{{.CROSS}} sh cores/gpsp/build.sh build {{.GPSP_COMMIT}} vendor/gpsp-src.tar.gz target-device/gpsp vendor/brick/gpsp_libretro.so'
+      - file vendor/brick/gpsp_libretro.so | grep -q aarch64
+      - sh tools/glibc-floor.sh vendor/brick/gpsp_libretro.so {{.BRICK_GLIBC}}
       - echo "{{.GPSP_COMMIT}}" > vendor/gpsp-src.sha
-      - cp vendor/gpsp_libretro.so.meta vendor/gpsp-src.meta
+      - cp vendor/brick/gpsp_libretro.so.meta vendor/gpsp-src.meta
 
   core:gpsp:update:
     desc: Refetch gpSP's source archive and rebuild the core from it, even if the set is current
     cmds:
       - >-
-        rm -f vendor/gpsp_libretro.so vendor/gpsp_libretro.so.meta vendor/gpsp-src.tar.gz
+        rm -f vendor/brick/gpsp_libretro.so vendor/brick/gpsp_libretro.so.meta vendor/gpsp-src.tar.gz
         vendor/gpsp-src.sha vendor/gpsp-src.meta
       - task: core:gpsp
 
@@ -261,7 +261,7 @@ tasks:
       - mkdir -p {{.OUT}}/Apps/Slot
       - cp -R card/Apps/Slot/. {{.OUT}}/Apps/Slot/
       - cp {{.BRICK_BIN}} {{.OUT}}/Apps/Slot/slot
-      - cp vendor/mgba_libretro.so vendor/gpsp_libretro.so {{.OUT}}/Apps/Slot/
+      - cp vendor/brick/mgba_libretro.so vendor/brick/gpsp_libretro.so {{.OUT}}/Apps/Slot/
       - cp -r licenses {{.OUT}}/Apps/Slot/licenses
       - |
         set -euo pipefail
@@ -269,8 +269,8 @@ tasks:
         cp vendor/gpsp-src.tar.gz "{{.OUT}}/Apps/Slot/licenses/gpsp-${sha}.tar.gz"
         cp vendor/gpsp-src.meta "{{.OUT}}/Apps/Slot/licenses/gpsp-${sha}.meta"
         for p in cores/gpsp/*.patch; do cp "$p" "{{.OUT}}/Apps/Slot/licenses/gpsp-$(basename "$p")"; done
-        commit="$(grep '^commit=' vendor/mgba_libretro.so.meta | cut -d= -f2)"
-        cp vendor/mgba_libretro.so.meta "{{.OUT}}/Apps/Slot/licenses/mgba-${commit}.meta"
+        commit="$(grep '^commit=' vendor/brick/mgba_libretro.so.meta | cut -d= -f2)"
+        cp vendor/brick/mgba_libretro.so.meta "{{.OUT}}/Apps/Slot/licenses/mgba-${commit}.meta"
         for p in cores/mgba/*.patch; do cp "$p" "{{.OUT}}/Apps/Slot/licenses/mgba-$(basename "$p")"; done
       - 'echo "Brick tree ready at {{.OUT}}: copy Apps/ and Slot/ to the root of the SD card"'
 
