@@ -7,6 +7,7 @@ pub mod gb;
 mod gb_palette;
 mod gba;
 pub mod ini;
+mod label_source;
 mod layout;
 mod platform;
 mod ring;
@@ -24,6 +25,7 @@ pub use core::{
 };
 pub use gb_palette::GbPalette;
 pub use gba::{header_clean, header_code, header_title, header_title_code};
+pub use label_source::{crc32, crc32_file, label_urls, LABEL_ART};
 pub use layout::{app_dir, Layout, BIOS_FILE, BOOT_HOOK_DIR, BOOT_HOOK_NAME, DATA_DIR};
 pub use platform::Platform;
 pub use ring::{StateEntry, StateRing, RING_MAX};

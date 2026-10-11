@@ -120,6 +120,7 @@ fn up_and_down_move_the_bar_and_wrap_at_the_ends() {
         QuickRow::Game,
         QuickRow::DateTime,
         QuickRow::About,
+        QuickRow::Labels,
         QuickRow::Exit,
         QuickRow::Screen,
     ] {
@@ -668,4 +669,47 @@ fn exit_to_menu_is_the_last_main_row_and_leaves_like_the_power_menu() {
     press(&mut a, Btn::A);
     assert!(a.exiting(), "A on Exit to Menu did not start leaving");
     assert!(!a.ready_to_exit(), "the exit screen shows before slot goes");
+}
+
+#[test]
+fn download_labels_asks_for_a_fetch_once() {
+    assert!(QuickRow::MAIN.contains(&QuickRow::Labels));
+    assert_eq!(QuickRow::Labels.label(), "Download Labels");
+    let (_d, mut a, _) = on_carousel();
+    assert!(!a.take_label_request());
+    open_at(&mut a, QuickRow::Labels);
+    assert_eq!(a.quick_value(QuickRow::Labels), None);
+    press(&mut a, Btn::A);
+    assert!(
+        a.take_label_request(),
+        "A on Download Labels asked for nothing"
+    );
+    assert!(!a.take_label_request(), "the request is taken once");
+}
+
+#[test]
+fn adopted_labels_reach_their_carts_and_the_old_faces_are_rebuilt() {
+    let (d, mut a, _) = on_carousel();
+    assert_eq!(a.labelless_carts().len(), 2);
+    for w in a.face_wants() {
+        a.set_cart_face(w.shelf, w.index, TexId::from_raw(900 + w.index));
+    }
+    assert!(a.face_wants().is_empty());
+    let label = d.path().join("Labels/GBA/Emerald.png");
+    a.adopt_labels(&[slot::label_fetch::Found {
+        platform: slot_store::Platform::Gba,
+        stem: "Emerald".into(),
+        label: label.clone(),
+    }]);
+    assert_eq!(a.labelless_carts().len(), 1);
+    let wants = a.face_wants();
+    assert_eq!(wants.len(), 1, "only Emerald's face is rebuilt");
+    let cart = a.face_cart(wants[0].shelf, wants[0].index).unwrap();
+    assert_eq!(cart.stem, "Emerald");
+    assert_eq!(cart.label.as_deref(), Some(label.as_path()));
+    assert!(
+        a.shed_faces()
+            .contains(&TexId::from_raw(900 + wants[0].index)),
+        "the old face's texture was never given back"
+    );
 }

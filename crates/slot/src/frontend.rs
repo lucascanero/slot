@@ -21,6 +21,7 @@ use crate::build_info::Build;
 use crate::cart_faces::CartFaces;
 use crate::face_builder::FaceBuilder;
 use crate::label_cache::{self, Rebuild};
+use crate::label_fetch::{CliGetter, LabelFetch};
 use crate::link_art_builder::LinkArtBuilder;
 use crate::link_screen::{LinkSprites, Sprite};
 use crate::link_start::{LinkFail, LinkStep};
@@ -44,6 +45,9 @@ pub struct Frontend {
     stale_check: Option<std::sync::mpsc::Receiver<Vec<slot_store::Cart>>>,
     ui_faces: Option<std::sync::mpsc::Receiver<UiFaces>>,
     rebuild_faces: RebuildFaces,
+    label_fetch: Option<LabelFetch>,
+    fetch_note: Option<(Instant, String)>,
+    fetch_faces: FetchFaces,
     link_art: LinkArtBuilder,
     link_art_done: bool,
     core_asked: Option<String>,
@@ -55,6 +59,18 @@ pub struct Frontend {
     clocks: Clocks,
     about: AboutFace,
     quick_clock: QuickClock,
+}
+
+const FETCH_NOTE_FOR: Duration = Duration::from_secs(2);
+
+#[derive(Default)]
+struct FetchFaces {
+    title: Option<TexId>,
+    title_size: (u32, u32),
+    title_shown: String,
+    count: Option<TexId>,
+    count_size: (u32, u32),
+    count_shown: Option<(usize, usize)>,
 }
 
 #[derive(Default)]
@@ -125,6 +141,9 @@ impl Frontend {
             stale_check,
             ui_faces: None,
             rebuild_faces: RebuildFaces::default(),
+            label_fetch: None,
+            fetch_note: None,
+            fetch_faces: FetchFaces::default(),
             link_art: LinkArtBuilder::spawn(),
             link_art_done: false,
             core_asked: None,
@@ -341,6 +360,9 @@ impl Frontend {
         compositor.set_frame_split(self.session.app().frame_split());
         compositor.set_game_source_rect(self.session.app().source_rect());
         compositor.begin_frame();
+        if self.draw_label_fetch(compositor) {
+            return;
+        }
         if self.draw_rebuild(compositor) {
             return;
         }
@@ -491,13 +513,86 @@ impl Frontend {
     pub fn advance(&mut self, input: &mut dyn InputSource) {
         let now = self.now();
         let events = input.poll(now);
-        if self.rebuild.is_some() {
+        if self.rebuild.is_some() || self.label_fetch.is_some() || self.fetch_note.is_some() {
             return;
         }
         self.session.feed(events, now);
         let dt = self.last.elapsed().as_secs_f32();
         self.last = Instant::now();
         self.session.update(dt);
+        self.start_label_fetch();
+    }
+
+    fn start_label_fetch(&mut self) {
+        if self.label_fetch.is_some() || !self.session.app_mut().take_label_request() {
+            return;
+        }
+        let Some(root) = self.session.app().root().map(|r| r.to_path_buf()) else {
+            return;
+        };
+        let carts = self.session.app().labelless_carts();
+        eprintln!("slot: labels: {} carts have no label", carts.len());
+        if carts.is_empty() {
+            self.fetch_note = Some((Instant::now(), "Every Cart Has A Label".into()));
+            return;
+        }
+        self.label_fetch = Some(LabelFetch::start(
+            &root,
+            carts,
+            std::sync::Arc::new(CliGetter),
+        ));
+    }
+
+    fn draw_label_fetch(&mut self, compositor: &mut Compositor) -> bool {
+        if self.label_fetch.as_ref().is_some_and(LabelFetch::finished) {
+            if let Some(fetch) = self.label_fetch.take() {
+                let found = fetch.found();
+                let note = if fetch.offline() {
+                    "No Network".to_string()
+                } else {
+                    format!("{} Labels Found", found.len())
+                };
+                eprintln!("slot: labels: {note}");
+                self.session.app_mut().adopt_labels(&found);
+                self.fetch_note = Some((Instant::now(), note));
+            }
+        }
+        let (title, done, total) = match (&self.label_fetch, &self.fetch_note) {
+            (Some(f), _) => ("Downloading Labels".to_string(), f.done(), f.total()),
+            (None, Some((at, note))) if at.elapsed() < FETCH_NOTE_FOR => (note.clone(), 1, 1),
+            (None, Some(_)) => {
+                self.fetch_note = None;
+                self.last = Instant::now();
+                return false;
+            }
+            (None, None) => return false,
+        };
+        let faces = &mut self.fetch_faces;
+        if faces.title.is_none() || faces.title_shown != title {
+            let f = rebuild_title_face(&title);
+            faces.title_size = (f.w, f.h);
+            upload(compositor, &mut faces.title, f);
+            faces.title_shown = title;
+        }
+        if faces.count_shown != Some((done, total)) {
+            let f = rebuild_count_face(&format!("{done} / {total}"));
+            faces.count_size = (f.w, f.h);
+            upload(compositor, &mut faces.count, f);
+            faces.count_shown = Some((done, total));
+        }
+        let screen = RebuildScreen {
+            title: faces
+                .title
+                .map(|tex| (tex, faces.title_size.0, faces.title_size.1)),
+            count: faces
+                .count
+                .map(|tex| (tex, faces.count_size.0, faces.count_size.1)),
+            fraction: done as f32 / total.max(1) as f32,
+        };
+        self.draws.clear();
+        screen.draw(&mut self.draws);
+        compositor.draw_list(&self.draws);
+        true
     }
 
     pub fn app(&self) -> &crate::app::App {

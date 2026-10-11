@@ -297,6 +297,8 @@ pub struct App {
     restarting: bool,
     exiting: bool,
     start_on_boot: bool,
+    label_request: bool,
+    dropped_faces: Vec<TexId>,
     act_at: Millis,
     root: Option<PathBuf>,
     state: SlotState,
@@ -424,6 +426,8 @@ impl App {
             restarting: false,
             exiting: false,
             start_on_boot: false,
+            label_request: false,
+            dropped_faces: Vec::new(),
             act_at: 0,
             root: None,
             state: SlotState::default(),
@@ -671,7 +675,8 @@ impl App {
             | QuickRow::About
             | QuickRow::Screen
             | QuickRow::Game
-            | QuickRow::Exit => None,
+            | QuickRow::Exit
+            | QuickRow::Labels => None,
         }
     }
 
@@ -806,9 +811,38 @@ impl App {
         self.shelves.get_mut(shelf)?.1.set_face(index, tex)
     }
 
+    pub fn take_label_request(&mut self) -> bool {
+        std::mem::take(&mut self.label_request)
+    }
+
+    pub fn labelless_carts(&self) -> Vec<Cart> {
+        self.shelves
+            .iter()
+            .flat_map(|(_, shelf)| shelf.carts.iter())
+            .filter(|c| c.label.is_none())
+            .cloned()
+            .collect()
+    }
+
+    pub fn adopt_labels(&mut self, found: &[crate::label_fetch::Found]) {
+        for (_, shelf) in self.shelves.iter_mut() {
+            for i in 0..shelf.carts.len() {
+                let cart = &shelf.carts[i];
+                let Some(f) = found
+                    .iter()
+                    .find(|f| f.platform == cart.platform && f.stem == cart.stem)
+                else {
+                    continue;
+                };
+                shelf.carts[i].label = Some(f.label.clone());
+                self.dropped_faces.extend(shelf.take_face(i));
+            }
+        }
+    }
+
     pub fn shed_faces(&mut self) -> Vec<TexId> {
         let neighbours = self.neighbour_shelves();
-        let mut shed = Vec::new();
+        let mut shed = std::mem::take(&mut self.dropped_faces);
         for (at, (_, shelf)) in self.shelves.iter_mut().enumerate() {
             let keep = if at == self.shelf_at {
                 shelf.around(FACE_KEEP)
@@ -1365,6 +1399,7 @@ impl App {
             }
             QuickRow::About => self.phase = Phase::About,
             QuickRow::Exit => self.begin_exit(),
+            QuickRow::Labels => self.label_request = true,
             QuickRow::Screen | QuickRow::Game => {
                 if let Some(row) = row.child() {
                     self.phase = Phase::QuickMenu { row };
@@ -1426,7 +1461,8 @@ impl App {
             | QuickRow::Screen
             | QuickRow::Game
             | QuickRow::StartOnBoot
-            | QuickRow::Exit => return,
+            | QuickRow::Exit
+            | QuickRow::Labels => return,
         }
         self.persist();
     }

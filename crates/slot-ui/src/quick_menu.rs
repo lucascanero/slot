@@ -22,10 +22,11 @@ pub enum QuickRow {
     GbPalettes,
     StartOnBoot,
     Exit,
+    Labels,
 }
 
 impl QuickRow {
-    pub const ALL: [QuickRow; 16] = [
+    pub const ALL: [QuickRow; 17] = [
         QuickRow::FastForward,
         QuickRow::FastForwardSound,
         QuickRow::Screen,
@@ -42,13 +43,15 @@ impl QuickRow {
         QuickRow::GbPalettes,
         QuickRow::StartOnBoot,
         QuickRow::Exit,
+        QuickRow::Labels,
     ];
 
-    pub const MAIN: [QuickRow; 5] = [
+    pub const MAIN: [QuickRow; 6] = [
         QuickRow::Screen,
         QuickRow::Game,
         QuickRow::DateTime,
         QuickRow::About,
+        QuickRow::Labels,
         QuickRow::Exit,
     ];
 
@@ -128,6 +131,7 @@ impl QuickRow {
             QuickRow::GbPalettes => "GB Palettes",
             QuickRow::StartOnBoot => "Start on Boot",
             QuickRow::Exit => "Exit to Menu",
+            QuickRow::Labels => "Download Labels",
         }
     }
 
@@ -139,6 +143,7 @@ impl QuickRow {
                 | QuickRow::Screen
                 | QuickRow::Game
                 | QuickRow::Exit
+                | QuickRow::Labels
         )
     }
 
