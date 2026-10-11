@@ -8,7 +8,7 @@ use slot::input::DeviceInput;
 use slot_gfx::{Compositor, FbdevSurface, Surface};
 use slot_power::{trace_first_frame, DevicePlatform};
 
-const CARD: &str = "/mnt/sdcard";
+const SD: &str = "/mnt/SDCARD";
 
 const MIN_FRAME: Duration = Duration::from_millis(12);
 
@@ -73,9 +73,18 @@ pub fn run() {
     let audio = std::thread::Builder::new()
         .name("slot-audio-open".into())
         .spawn(slot::audio::opened_sink);
-    let root = std::env::var_os("SLOT_ROOT")
+    let sd = std::env::var_os("SLOT_SD")
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(CARD));
+        .unwrap_or_else(|| PathBuf::from(SD));
+    let layout = slot_store::Layout::stockmix(&sd, &slot_store::app_dir());
+    eprintln!(
+        "slot: data {}, roms {}, app {}",
+        layout.data().display(),
+        layout.roms(slot_store::Platform::Gba).display(),
+        layout.app().display()
+    );
+    let root = layout.data().to_path_buf();
+    layout.install();
     let mut surface = match FbdevSurface::new() {
         Ok(s) => s,
         Err(e) => {
