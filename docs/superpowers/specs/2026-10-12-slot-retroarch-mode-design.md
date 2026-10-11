@@ -66,22 +66,22 @@ launch.sh
  └─ ciclo:
      ├─ corre o slot
      ├─ se não houver Slot/Config/retroarch.request → sai do ciclo (Exit to Menu, Power Off, …)
-     ├─ lê o pedido e apaga-o
+     ├─ move o pedido para retroarch.request.run (um pedido nunca corre duas vezes)
      ├─ relança o keymon tal como estava
-     ├─ sh retroarch.sh <core> <rom|-> <host|join|->
+     ├─ sh retroarch.sh retroarch.request.run, e apaga-o no fim
      ├─ mata o keymon
      ├─ se o pedido tinha link → sh slotlink.sh link down
      └─ volta ao início (reabre o slot)
 ```
 
 **O pedido** (`Slot/Config/retroarch.request`):
-- Três linhas, `core=…`, `rom=…` e `link=…`. A `rom` pode estar vazia ("só o menu") e o `link` também.
+- Linhas `chave=valor`: `mode=game|menu`, e num jogo também `core=…`, `core_name=mGBA|gpSP`, `rom=…`, `link=host|join|` (vazio sem link) e zero ou mais `option=chave=valor` (as opções de link do core).
+- Um pedido sem `mode` válido, ou um jogo sem core ou ROM, não é um pedido.
 - É escrito com a escrita atómica que o Slot já usa (`atomic_write`), por isso um pedido meio escrito nunca é lido.
 
 **Ao sair para o RetroArch**, o Slot:
 - grava o estado com o cartucho em frente;
-- **não** liberta o hardware com `release()`, porque o Slot volta já a seguir e o `launch.sh` trata do `keymon`;
-- termina o processo como no "Exit to Menu".
+- sai exatamente como no "Exit to Menu", incluindo o `release()`. Assim os LEDs, o brilho e o volume do StockMix são repostos e o RetroArch arranca como se fosse lançado pelo StockMix. Ao voltar, o Slot aplica outra vez os seus.
 
 **Ao voltar**, o Slot arranca normalmente e mostra a prateleira com esse cartucho em frente. No modo RetroArch, o "retomar o jogo" do Slot não se aplica: o jogo estava no RetroArch.
 
@@ -101,6 +101,7 @@ HOME="$RA_DIR" ./ra64.trimui -v -L "$core" [--host | --connect 10.42.0.1] "$rom"
 ```
 
 - **Só o menu** (RetroArch Settings): o mesmo, sem `-L` e sem ROM.
+- **Hotkeys:** se o `ra_hotkey` não existia antes, o `retroarch.sh` apaga-o quando o RetroArch sai, para o MENU voltar a chegar ao Slot como antes.
 - **Caminhos:** todos os caminhos e programas podem ser trocados por variáveis de ambiente, para os testes de cartão.
 - **Saída:** devolve o código do RetroArch. O `launch.sh` volta ao Slot com qualquer código.
 
@@ -134,6 +135,9 @@ HOME="$RA_DIR" ./ra64.trimui -v -L "$core" [--host | --connect 10.42.0.1] "$rom"
   3. O RetroArch abre com `--connect 10.42.0.1`.
   4. Se não encontrar anfitrião, mostra a recusa de link que já existe e fica na prateleira.
 - **No fim:** o `launch.sh` corre `slotlink.sh link down`, que desfaz a rede direta e repõe o WiFi stock.
+- **Opções de link do core:** no Slot, o link liga-se com opções do core. O pedido leva-as e o `retroarch.sh` põe-nas num ficheiro de opções do jogo no RetroArch (`<config>/<mGBA|gpSP>/<jogo>.opt`), só durante a sessão; no fim repõe o ficheiro que lá estava, ou apaga-o.
+  - O mGBA usa `mgba_link = on` e `mgba_link_player` (0 no Host, 1 no Join): cada Brick corre os dois GBAs e o netplay do RetroArch troca os botões.
+  - O gpSP usa `gpsp_serial` com o modo que o Slot escolheria para o jogo, e troca os pacotes pela interface netpacket.
 
 ### Erros
 
