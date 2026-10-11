@@ -17,7 +17,17 @@ echo "core" > "$TMP/core_pattern"
 mkdir -p "$TMP/sd/Slot"
 echo "old run" > "$TMP/sd/Slot/slot.log"
 
-SLOT_SD="$TMP/sd" SLOT_CORE_PATTERN="$TMP/core_pattern" sh "$TMP/app/launch.sh"
+mkdir -p "$TMP/bin"
+cat > "$TMP/bin/killall" <<-SH
+	#!/bin/sh
+	echo "\$*" >> "$TMP/killall.log"
+SH
+chmod +x "$TMP/bin/killall"
+cat >> "$TMP/app/slot" <<-SH
+	echo "killed=\$(cat "$TMP/killall.log" 2>/dev/null)"
+SH
+
+PATH="$TMP/bin:$PATH" SLOT_SD="$TMP/sd" SLOT_CORE_PATTERN="$TMP/core_pattern" sh "$TMP/app/launch.sh"
 
 log="$TMP/sd/Slot/slot.log"
 grep -q "sd=$TMP/sd app=$TMP/app pwd=$TMP/app" "$log" \
@@ -28,5 +38,9 @@ grep -q "pattern=|/bin/sh $TMP/app/coresave.sh %p %s %e %t" "$log" \
 	|| { echo "the core pattern was not given back" >&2; exit 1; }
 [ "$(cat "$TMP/sd/Slot/slot.log.1")" = "old run" ] \
 	|| { echo "the last run's log was not kept" >&2; exit 1; }
+grep -q "killed=keymon" "$log" \
+	|| { echo "the stock keymon still owned Vol and power while slot ran: [$(cat "$log")]" >&2; exit 1; }
+[ "$(grep -c . "$TMP/killall.log")" = "1" ] \
+	|| { echo "launch.sh touched keymon again after slot: [$(cat "$TMP/killall.log")]" >&2; exit 1; }
 
 echo "launch: all passed"
