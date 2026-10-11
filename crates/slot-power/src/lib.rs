@@ -58,6 +58,14 @@ pub trait Platform: Send {
 
     fn release(&mut self) {}
 
+    fn can_suspend(&self) -> bool {
+        false
+    }
+
+    fn suspend(&mut self) -> bool {
+        false
+    }
+
     fn card_read_only(&self) -> bool {
         false
     }

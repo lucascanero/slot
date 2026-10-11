@@ -65,6 +65,8 @@ const PLAY_HOLD_MS: Millis = 500;
 
 const SHUTDOWN_SHOW_MS: Millis = 250;
 
+const RESUME_SETTLE_MS: Millis = 1_500;
+
 const POWER_MENU_PITCH: f32 = 44.0;
 const POWER_MENU_BAR_INSET: f32 = 4.0;
 const CORE_PICKER_RECEDE: f32 = 0.26;
@@ -298,6 +300,7 @@ pub struct App {
     exiting: bool,
     start_on_boot: bool,
     label_request: bool,
+    resumed_at: Option<Millis>,
     dropped_faces: Vec<TexId>,
     act_at: Millis,
     root: Option<PathBuf>,
@@ -427,6 +430,7 @@ impl App {
             exiting: false,
             start_on_boot: false,
             label_request: false,
+            resumed_at: None,
             dropped_faces: Vec::new(),
             act_at: 0,
             root: None,
@@ -1250,6 +1254,15 @@ impl App {
     }
 
     pub fn apply(&mut self, action: Action) {
+        if matches!(
+            action,
+            Action::PowerPress | Action::PowerTap | Action::PowerHold | Action::PowerOff
+        ) && self
+            .resumed_at
+            .is_some_and(|at| self.now().saturating_sub(at) < RESUME_SETTLE_MS)
+        {
+            return;
+        }
         if self.power_menu.is_some() {
             match action {
                 Action::LidClose => return self.doze(),
@@ -2665,7 +2678,15 @@ impl App {
         if !matches!(self.phase, Phase::Doze { .. }) {
             return;
         }
-        self.begin_power_off();
+        let slept = self
+            .power
+            .as_mut()
+            .is_some_and(|p| p.can_suspend() && p.suspend());
+        if !slept {
+            return self.begin_power_off();
+        }
+        self.resumed_at = Some(self.now());
+        self.wake();
     }
 
     fn power_press(&mut self) {

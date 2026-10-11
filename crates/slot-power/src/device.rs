@@ -215,6 +215,7 @@ pub struct DevicePlatform {
     jack: Arc<AtomicBool>,
     brightness_before: Option<u32>,
     volume: Option<crate::mixer::HwVolume>,
+    suspend_script: Option<PathBuf>,
 }
 
 impl DevicePlatform {
@@ -223,6 +224,9 @@ impl DevicePlatform {
         p.brightness_before = disp(&p.disp, DISP_LCD_GET_BRIGHTNESS, 0)
             .and_then(|v| u32::try_from(v).ok())
             .filter(|v| *v > 0);
+        let script = app_dir().join("suspend.sh");
+        p.suspend_script =
+            (script.is_file() && Path::new("/sys/power/state").is_file()).then_some(script);
         p.volume = Some(crate::mixer::HwVolume::take(
             &crate::mixer::CliAmixer,
             Path::new("/sys"),
@@ -241,6 +245,7 @@ impl DevicePlatform {
             jack,
             brightness_before: None,
             volume: None,
+            suspend_script: None,
         }
     }
 
@@ -284,6 +289,17 @@ impl DevicePlatform {
             leaf(&self.rtc, "no rtc"),
         )
     }
+}
+
+fn app_dir() -> PathBuf {
+    std::env::var_os("SLOT_APP")
+        .map(PathBuf::from)
+        .or_else(|| {
+            std::env::current_exe()
+                .ok()
+                .and_then(|exe| exe.parent().map(Path::to_path_buf))
+        })
+        .unwrap_or_else(|| PathBuf::from("."))
 }
 
 fn ran(what: &str, result: std::io::Result<std::process::ExitStatus>) {
@@ -373,6 +389,23 @@ impl Platform for DevicePlatform {
         self.battery
             .as_ref()
             .map_or(Charge::Unknown, |dir| charge_at(dir))
+    }
+
+    fn can_suspend(&self) -> bool {
+        self.suspend_script.is_some()
+    }
+
+    fn suspend(&mut self) -> bool {
+        let Some(script) = &self.suspend_script else {
+            return false;
+        };
+        eprintln!("slot: suspend");
+        let ok = Command::new("/bin/sh")
+            .arg(script)
+            .status()
+            .is_ok_and(|s| s.success());
+        eprintln!("slot: resumed, sleep {}", if ok { "ok" } else { "failed" });
+        ok
     }
 
     fn set_led(&mut self, state: LedState) {

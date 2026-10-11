@@ -50,6 +50,14 @@ impl Power {
         self.platform.set_rumble(strength);
     }
 
+    pub fn can_suspend(&self) -> bool {
+        self.platform.can_suspend()
+    }
+
+    pub fn suspend(&mut self) -> bool {
+        self.platform.suspend()
+    }
+
     pub fn release(&mut self) {
         self.platform.release();
     }

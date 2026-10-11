@@ -30,6 +30,8 @@ use crate::wallpaper;
 
 const DOZE_TIMEOUT: Duration = Duration::from_secs(180);
 
+const SUSPEND_AFTER: Duration = Duration::from_secs(3);
+
 const ALERT_INK: [u8; 3] = [0xf0, 0xb4, 0x3c];
 
 pub struct Frontend {
@@ -125,9 +127,14 @@ impl Frontend {
         crate::boot_time::mark("session");
         let stale_check =
             Self::check_labels(platform.root(), session.app().carts().cloned().collect());
-        session
-            .app_mut()
-            .set_power(Power::new(platform, DOZE_TIMEOUT));
+        session.app_mut().set_power({
+            let timeout = if platform.can_suspend() {
+                SUSPEND_AFTER
+            } else {
+                DOZE_TIMEOUT
+            };
+            Power::new(platform, timeout)
+        });
         Frontend {
             session,
             start: now,
