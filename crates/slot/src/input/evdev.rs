@@ -7,7 +7,6 @@ pub const EVENT_BYTES: usize = 24;
 pub const EV_SYN: u16 = 0x00;
 pub const EV_KEY: u16 = 0x01;
 pub const EV_SW: u16 = 0x05;
-pub const SW_LID: u16 = 0x00;
 
 pub const EV_ABS: u16 = 0x03;
 pub const ABS_HAT0X: u16 = 0x10;
@@ -151,7 +150,29 @@ pub const WANTED: [u16; 12] = [
 
 pub use slot_power::has_bit;
 
-pub fn pick_devices(dev: &Path, sys: &Path) -> Vec<PathBuf> {
+const PAD_PREFIX: &str = "TRIMUI Player";
+const AXES: [u16; 4] = [ABS_HAT0X, ABS_HAT0Y, ABS_Z, ABS_RZ];
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Picked {
+    pub node: PathBuf,
+    pub keys: Vec<u16>,
+    pub axes: bool,
+    pub jack: bool,
+}
+
+impl Picked {
+    pub fn wants(&self, ev: Ev) -> bool {
+        match ev.kind {
+            EV_KEY => self.keys.contains(&ev.code),
+            EV_ABS => self.axes,
+            EV_SW => self.jack && ev.code == SW_HEADPHONE_INSERT,
+            _ => false,
+        }
+    }
+}
+
+pub fn pick_devices(dev: &Path, sys: &Path) -> Vec<Picked> {
     let Ok(entries) = std::fs::read_dir(dev) else {
         return Vec::new();
     };
@@ -164,20 +185,38 @@ pub fn pick_devices(dev: &Path, sys: &Path) -> Vec<PathBuf> {
         })
         .collect();
     nodes.sort();
-    nodes.retain(|node| {
+    nodes.sort_by_key(|node| !device_name(sys, node).starts_with(PAD_PREFIX));
+    let (mut axes_taken, mut jack_taken) = (false, false);
+    let mut picked = Vec::new();
+    for node in nodes {
         let Some(name) = node.file_name() else {
-            return false;
+            continue;
         };
-        wanted_node(&sys.join(name).join("device"))
-    });
-    nodes
-}
-
-fn wanted_node(device: &Path) -> bool {
-    let cap = |file: &str| std::fs::read_to_string(device.join("capabilities").join(file));
-    let keys = cap("key").unwrap_or_default();
-    let lid = cap("sw").is_ok_and(|sw| has_bit(&sw, SW_LID));
-    lid || WANTED.iter().any(|bit| has_bit(&keys, *bit))
+        let device = sys.join(name).join("device");
+        let cap = |file: &str| {
+            std::fs::read_to_string(device.join("capabilities").join(file)).unwrap_or_default()
+        };
+        let (key, abs, sw) = (cap("key"), cap("abs"), cap("sw"));
+        let keys: Vec<u16> = WANTED
+            .iter()
+            .copied()
+            .filter(|k| has_bit(&key, *k))
+            .collect();
+        let axes = !axes_taken && AXES.iter().any(|a| has_bit(&abs, *a));
+        let jack = !jack_taken && has_bit(&sw, SW_HEADPHONE_INSERT);
+        if keys.is_empty() && !axes && !jack {
+            continue;
+        }
+        axes_taken |= axes;
+        jack_taken |= jack;
+        picked.push(Picked {
+            node,
+            keys,
+            axes,
+            jack,
+        });
+    }
+    picked
 }
 
 pub fn device_name(sys: &Path, node: &Path) -> String {

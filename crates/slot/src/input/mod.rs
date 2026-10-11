@@ -9,7 +9,7 @@ mod mask;
 mod pad;
 pub mod trace;
 
-pub use device::DeviceInput;
+pub use device::{DeviceInput, Held};
 #[cfg(feature = "host")]
 pub use host::HostInput;
 pub use mask::Pad;

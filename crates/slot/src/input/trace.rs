@@ -14,7 +14,7 @@ pub fn enabled() -> bool {
 }
 
 pub fn survey(dev: &Path, sys: &Path) -> Vec<String> {
-    let opened = pick_devices(dev, sys);
+    let opened: Vec<PathBuf> = pick_devices(dev, sys).into_iter().map(|p| p.node).collect();
     let Ok(entries) = std::fs::read_dir(dev) else {
         return vec![format!("no {} to survey", dev.display())];
     };
@@ -45,9 +45,10 @@ pub fn survey(dev: &Path, sys: &Path) -> Vec<String> {
                     .unwrap_or_else(|_| "-".to_string())
             };
             format!(
-                "{file} {state} name={:?} key=[{}] sw=[{}]",
+                "{file} {state} name={:?} key=[{}] abs=[{}] sw=[{}]",
                 device_name(sys, node),
                 cap("key"),
+                cap("abs"),
                 cap("sw")
             )
         })

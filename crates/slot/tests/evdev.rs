@@ -98,10 +98,10 @@ fn devices_are_picked_by_capability_and_never_by_position() {
     );
     let names: Vec<_> = picked
         .iter()
-        .filter_map(|p| p.file_name())
+        .filter_map(|p| p.node.file_name())
         .map(|n| n.to_string_lossy().into_owned())
         .collect();
-    assert_eq!(names, ["event1", "event2"]);
+    assert_eq!(names, ["event1"]);
 }
 
 #[test]
@@ -136,7 +136,7 @@ fn the_survey_reports_the_nodes_that_were_not_opened_too() {
         line("event0")
     );
     assert!(line("event1").contains("opened"), "{}", line("event1"));
-    assert!(line("event2").contains("opened"), "{}", line("event2"));
+    assert!(line("event2").contains("skipped"), "{}", line("event2"));
 }
 
 #[test]
@@ -390,4 +390,164 @@ fn the_triggers_and_the_jack_are_traced_by_name() {
         },
     );
     assert!(jack.contains("headphones"), "{jack}");
+}
+
+fn caps(bits: &[u16]) -> String {
+    let top = bits.iter().map(|b| usize::from(*b) / 64).max().unwrap_or(0);
+    let mut words = vec![0u64; top + 1];
+    for b in bits {
+        words[usize::from(*b) / 64] |= 1 << (b % 64);
+    }
+    let text: Vec<String> = words.iter().rev().map(|w| format!("{w:x}")).collect();
+    text.join(" ")
+        + "
+"
+}
+
+fn node(d: &tempfile::TempDir, ev: &str, name: &str, keys: &[u16], abs: &[u16], sw: &[u16]) {
+    let sys = d.path().join("sys/class/input").join(ev).join("device");
+    write(&d.path().join("dev/input").join(ev), "");
+    write(
+        &sys.join("name"),
+        &format!(
+            "{name}
+"
+        ),
+    );
+    write(&sys.join("capabilities/key"), &caps(keys));
+    write(&sys.join("capabilities/abs"), &caps(abs));
+    write(&sys.join("capabilities/sw"), &caps(sw));
+}
+
+fn brick_tree() -> tempfile::TempDir {
+    let d = tempfile::tempdir().unwrap();
+    node(&d, "event0", "sunxi-keyboard", &[114, 115], &[], &[]);
+    node(&d, "event1", "axp2202-pek", &[116], &[], &[]);
+    node(
+        &d,
+        "event2",
+        "audiocodec sunxi Audio Jack",
+        &[114, 115, 226, 582],
+        &[],
+        &[0x02, 0x04],
+    );
+    node(
+        &d,
+        "event3",
+        "TRIMUI Player1",
+        &[
+            59, 60, 114, 115, 0x130, 0x131, 0x133, 0x134, 0x136, 0x137, 0x13a, 0x13b, 0x13c, 0x13d,
+            0x13e,
+        ],
+        &[0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x10, 0x11],
+        &[0x01],
+    );
+    d
+}
+
+fn picked_in(d: &tempfile::TempDir) -> Vec<slot::input::evdev::Picked> {
+    pick_devices(
+        &d.path().join("dev/input"),
+        &d.path().join("sys/class/input"),
+    )
+}
+
+fn named(picked: &[slot::input::evdev::Picked], ev: &str) -> slot::input::evdev::Picked {
+    picked
+        .iter()
+        .find(|p| p.node.ends_with(ev))
+        .unwrap_or_else(|| panic!("{ev} was not picked: {picked:?}"))
+        .clone()
+}
+
+#[test]
+fn the_virtual_pad_is_read_first_and_owns_the_axes() {
+    let d = brick_tree();
+    let picked = picked_in(&d);
+    assert!(picked[0].node.ends_with("event3"), "{picked:?}");
+    assert!(named(&picked, "event3").axes);
+    for ev in ["event0", "event1", "event2"] {
+        assert!(!named(&picked, ev).axes, "{ev} was given the axes too");
+    }
+}
+
+#[test]
+fn every_node_that_carries_a_button_is_read_for_it() {
+    let d = brick_tree();
+    let picked = picked_in(&d);
+    assert_eq!(named(&picked, "event0").keys, vec![115, 114]);
+    assert_eq!(named(&picked, "event1").keys, vec![116]);
+    assert_eq!(named(&picked, "event2").keys, vec![115, 114]);
+    let pad = named(&picked, "event3");
+    assert!(pad.keys.contains(&0x131) && pad.keys.contains(&0x13c) && pad.keys.contains(&115));
+}
+
+#[test]
+fn the_headphone_switch_comes_from_the_one_node_that_has_it() {
+    let d = brick_tree();
+    let picked = picked_in(&d);
+    assert!(named(&picked, "event2").jack);
+    assert!(
+        !named(&picked, "event3").jack,
+        "the pad's own switch is not the jack"
+    );
+}
+
+#[test]
+fn a_picked_node_passes_only_what_it_claimed() {
+    use slot::input::evdev::{Ev, Picked, EV_ABS};
+    let p = Picked {
+        node: "event0".into(),
+        keys: vec![115],
+        axes: false,
+        jack: false,
+    };
+    let ev = |kind, code| Ev {
+        kind,
+        code,
+        value: 1,
+    };
+    assert!(p.wants(ev(EV_KEY, 115)));
+    assert!(!p.wants(ev(EV_KEY, 0x130)));
+    assert!(!p.wants(ev(EV_ABS, 0x10)));
+    assert!(!p.wants(ev(EV_SW, 0x02)));
+}
+
+#[test]
+fn a_lid_switch_alone_no_longer_opens_a_node() {
+    let d = tempfile::tempdir().unwrap();
+    node(&d, "event2", "gpio-keys-lid", &[], &[], &[0x00]);
+    assert!(picked_in(&d).is_empty());
+}
+
+#[test]
+fn a_press_seen_on_two_nodes_reaches_the_app_once() {
+    let mut held = slot::input::Held::default();
+    let mut out = Vec::new();
+    out.extend(held.pass(vec![RawEvent::Down(Btn::VolUp)]));
+    out.extend(held.pass(vec![RawEvent::Down(Btn::VolUp)]));
+    out.extend(held.pass(vec![RawEvent::Up(Btn::VolUp)]));
+    out.extend(held.pass(vec![RawEvent::Up(Btn::VolUp)]));
+    assert_eq!(
+        out,
+        vec![RawEvent::Down(Btn::VolUp), RawEvent::Up(Btn::VolUp)]
+    );
+}
+
+#[test]
+fn a_release_with_no_press_is_dropped_and_others_pass() {
+    let mut held = slot::input::Held::default();
+    assert_eq!(
+        held.pass(vec![
+            RawEvent::Up(Btn::A),
+            RawEvent::Down(Btn::B),
+            RawEvent::Down(Btn::A),
+            RawEvent::Up(Btn::B),
+        ]),
+        vec![
+            RawEvent::Down(Btn::B),
+            RawEvent::Down(Btn::A),
+            RawEvent::Up(Btn::B)
+        ]
+    );
 }

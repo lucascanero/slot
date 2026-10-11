@@ -1,4 +1,6 @@
 use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use slot::frontend::Frontend;
@@ -92,6 +94,7 @@ pub fn run() {
     slot::boot_time::mark("compositor");
     let window = surface.window_size();
     eprintln!("slot: panel {}x{}", window.0, window.1);
+    let jack = Arc::new(AtomicBool::new(false));
     let platform = DevicePlatform::new(root.clone());
     eprintln!("slot: {}", platform.report());
     platform.trace_boot();
@@ -107,7 +110,7 @@ pub fn run() {
     slot::boot_time::mark("faces");
     frontend.upload_bezel(&mut compositor, window);
     slot::boot_time::mark("bezel");
-    let mut input = DeviceInput::open(&root);
+    let mut input = DeviceInput::open(&root, jack);
     slot::boot_time::mark("input");
     let mut drawn = false;
     frontend.drive_emulator();
