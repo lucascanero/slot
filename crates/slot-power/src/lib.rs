@@ -4,9 +4,9 @@ mod power;
 mod sim;
 
 pub use device::{
-    backlight_value, has_bit, motor_change, motor_voltage, read_only, read_only_in,
-    record_first_frame, trace_first_frame, uptime_seconds, DevicePlatform, BACKLIGHT, MOTOR_MAX_UV,
-    MOTOR_MIN_UV, RUMBLE_GPIO,
+    backlight_value, has_bit, led_hex, motor_change, motor_voltage, read_only, read_only_in,
+    record_first_frame, trace_first_frame, uptime_seconds, DevicePlatform, BACKLIGHT,
+    LED_SCALE_F1F2, LED_STATIC, MOTOR_MAX_UV, MOTOR_MIN_UV, RUMBLE_GPIO,
 };
 pub use motor::Motor;
 pub use power::Power;
@@ -53,6 +53,8 @@ pub trait Platform: Send {
     fn headphones(&self) -> bool {
         false
     }
+
+    fn release(&mut self) {}
 
     fn card_read_only(&self) -> bool {
         false

@@ -50,6 +50,10 @@ impl Power {
         self.platform.set_rumble(strength);
     }
 
+    pub fn release(&mut self) {
+        self.platform.release();
+    }
+
     pub fn poweroff(&mut self) -> ! {
         self.platform.poweroff()
     }

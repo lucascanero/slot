@@ -4,8 +4,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use slot_power::{
-    backlight_value, motor_change, motor_voltage, Battery, Charge, DevicePlatform, Platform,
-    BACKLIGHT, MOTOR_MAX_UV, MOTOR_MIN_UV,
+    backlight_value, motor_change, motor_voltage, Battery, Charge, DevicePlatform, LedState,
+    Platform, BACKLIGHT, MOTOR_MAX_UV, MOTOR_MIN_UV,
 };
 use tempfile::TempDir;
 
@@ -235,4 +235,96 @@ fn the_closest_mount_decides_not_the_root() {
 fn an_option_that_merely_mentions_ro_is_not_read_only() {
     let m = "/dev/x /mnt/card vfat rw,errors=remount-ro 0 0\n";
     assert!(!slot_power::read_only_in(m, Path::new("/mnt/card")));
+}
+
+fn led_tree(d: &TempDir) {
+    let dir = d.path().join("class/led_anim");
+    fs::create_dir_all(&dir).unwrap();
+    for (attr, value) in [
+        ("max_scale_f1f2", "100"),
+        ("effect_f1", "1"),
+        ("effect_f2", "1"),
+        ("effect_m", "2"),
+        ("effect_lr", "3"),
+        ("effect_rgb_hex_f1", "FFFFFF"),
+        ("effect_rgb_hex_f2", "FFFFFF"),
+        ("effect_rgb_hex_m", "00FFFF"),
+        ("effect_rgb_hex_lr", "FF00FF"),
+        ("effect_cycles_f1", "-1"),
+        ("effect_cycles_f2", "-1"),
+        ("effect_cycles_m", "-1"),
+        ("effect_cycles_lr", "-1"),
+    ] {
+        fs::write(dir.join(attr), format!("{value}\n")).unwrap();
+    }
+}
+
+#[test]
+fn only_the_f1_and_f2_buttons_light_up() {
+    let d = sysfs("87");
+    led_tree(&d);
+    let mut p = platform(&d);
+    assert_eq!(read(&d, "class/led_anim/effect_rgb_hex_m"), "000000");
+    assert_eq!(read(&d, "class/led_anim/effect_rgb_hex_lr"), "000000");
+    assert_eq!(read(&d, "class/led_anim/effect_m"), "4");
+    assert_eq!(read(&d, "class/led_anim/effect_lr"), "4");
+    assert_eq!(read(&d, "class/led_anim/max_scale_f1f2"), "40");
+    for (state, hex) in [
+        (LedState::Running, "00FF00"),
+        (LedState::Charging, "FF8C00"),
+        (LedState::Low, "FF0000"),
+        (LedState::Charged, "00FF00"),
+        (LedState::Off, "000000"),
+    ] {
+        p.set_led(state);
+        for zone in ["f1", "f2"] {
+            assert_eq!(
+                read(&d, &format!("class/led_anim/effect_rgb_hex_{zone}")),
+                hex,
+                "{state:?} on {zone}"
+            );
+            assert_eq!(read(&d, &format!("class/led_anim/effect_{zone}")), "4");
+        }
+        assert_eq!(
+            read(&d, "class/led_anim/effect_rgb_hex_m"),
+            "000000",
+            "{state:?} lit the top bar"
+        );
+    }
+}
+
+#[test]
+fn release_puts_the_leds_back_the_way_they_were() {
+    let d = sysfs("87");
+    led_tree(&d);
+    let mut p = platform(&d);
+    p.set_led(LedState::Low);
+    p.release();
+    for (attr, value) in [
+        ("max_scale_f1f2", "100"),
+        ("effect_f1", "1"),
+        ("effect_m", "2"),
+        ("effect_lr", "3"),
+        ("effect_rgb_hex_f1", "FFFFFF"),
+        ("effect_rgb_hex_m", "00FFFF"),
+        ("effect_rgb_hex_lr", "FF00FF"),
+    ] {
+        assert_eq!(read(&d, &format!("class/led_anim/{attr}")), value, "{attr}");
+    }
+}
+
+#[test]
+fn release_stops_a_running_motor() {
+    let d = sysfs("87");
+    let mut p = platform(&d);
+    p.set_rumble(u16::MAX);
+    p.release();
+    assert_eq!(read(&d, "class/gpio/gpio227/value"), "0");
+}
+
+#[test]
+fn a_tree_with_no_led_anim_is_a_silent_no_op() {
+    let mut p = platform(&sysfs("87"));
+    p.set_led(LedState::Running);
+    p.release();
 }

@@ -91,6 +91,80 @@ fn disp(dev: &Path, request: c_ulong, value: u32) -> Option<i32> {
     (rc >= 0).then_some(rc)
 }
 
+pub const LED_STATIC: u32 = 4;
+pub const LED_SCALE_F1F2: u32 = 40;
+const LED_LIT: [&str; 2] = ["f1", "f2"];
+const LED_DARK: [&str; 2] = ["m", "lr"];
+
+pub fn led_hex(state: LedState) -> &'static str {
+    match state {
+        LedState::Off => "000000",
+        LedState::Running | LedState::Charged => "00FF00",
+        LedState::Low => "FF0000",
+        LedState::Charging => "FF8C00",
+    }
+}
+
+fn led_attrs() -> Vec<String> {
+    let mut out = vec!["max_scale_f1f2".to_string()];
+    for zone in ["f1", "f2", "m", "lr"] {
+        for attr in ["effect_rgb_hex", "effect_cycles", "effect"] {
+            out.push(format!("{attr}_{zone}"));
+        }
+    }
+    out
+}
+
+struct Leds {
+    dir: PathBuf,
+    saved: Vec<(PathBuf, String)>,
+}
+
+impl Leds {
+    fn take(sysfs: &Path) -> Option<Leds> {
+        let dir = sysfs.join("class/led_anim");
+        if !dir.is_dir() {
+            return None;
+        }
+        let saved = led_attrs()
+            .into_iter()
+            .map(|a| dir.join(a))
+            .filter_map(|p| {
+                let v = fs::read_to_string(&p).ok()?;
+                Some((p, v.trim().to_string()))
+            })
+            .collect();
+        let leds = Leds { dir, saved };
+        for zone in LED_DARK {
+            leds.colour(zone, "000000");
+        }
+        leds.write("max_scale_f1f2", &LED_SCALE_F1F2.to_string());
+        Some(leds)
+    }
+
+    fn write(&self, attr: &str, value: &str) {
+        let _ = fs::write(self.dir.join(attr), format!("{value}\n"));
+    }
+
+    fn colour(&self, zone: &str, hex: &str) {
+        self.write(&format!("effect_rgb_hex_{zone}"), hex);
+        self.write(&format!("effect_cycles_{zone}"), "-1");
+        self.write(&format!("effect_{zone}"), &LED_STATIC.to_string());
+    }
+
+    fn show(&self, state: LedState) {
+        for zone in LED_LIT {
+            self.colour(zone, led_hex(state));
+        }
+    }
+
+    fn restore(&self) {
+        for (path, value) in &self.saved {
+            let _ = fs::write(path, format!("{value}\n"));
+        }
+    }
+}
+
 struct GpioMotor {
     value: PathBuf,
     voltage: Option<PathBuf>,
@@ -137,6 +211,7 @@ pub struct DevicePlatform {
     battery: Option<PathBuf>,
     rtc: Option<PathBuf>,
     motor: Option<GpioMotor>,
+    leds: Option<Leds>,
     jack: Arc<AtomicBool>,
     brightness_before: Option<u32>,
 }
@@ -157,6 +232,7 @@ impl DevicePlatform {
             battery: first_dir(&sysfs.join("class/power_supply"), is_battery),
             rtc: first_dir(&sysfs.join("class/rtc"), |_| true),
             motor: GpioMotor::open(sysfs),
+            leds: Leds::take(sysfs),
             jack,
             brightness_before: None,
         }
@@ -190,8 +266,13 @@ impl DevicePlatform {
             Some(_) => format!("motor gpio{RUMBLE_GPIO}"),
             None => "no motor".to_string(),
         };
+        let leds = if self.leds.is_some() {
+            "leds led_anim"
+        } else {
+            "no leds"
+        };
         format!(
-            "backlight {}, battery {}, {}, {motor}",
+            "backlight {}, battery {}, {}, {motor}, {leds}",
             self.disp.display(),
             leaf(&self.battery, "no battery"),
             leaf(&self.rtc, "no rtc"),
@@ -288,7 +369,25 @@ impl Platform for DevicePlatform {
             .map_or(Charge::Unknown, |dir| charge_at(dir))
     }
 
-    fn set_led(&mut self, _state: LedState) {}
+    fn set_led(&mut self, state: LedState) {
+        if let Some(leds) = &self.leds {
+            leds.show(state);
+        }
+    }
+
+    fn release(&mut self) {
+        if let Some(motor) = &mut self.motor {
+            if motor.running {
+                motor.play(0);
+            }
+        }
+        if let Some(leds) = &self.leds {
+            leds.restore();
+        }
+        if let Some(level) = self.brightness_before {
+            let _ = disp(&self.disp, DISP_LCD_SET_BRIGHTNESS, level);
+        }
+    }
 
     fn restart(&mut self) -> ! {
         self.breadcrumb("restart: reached slot, about to sync");
