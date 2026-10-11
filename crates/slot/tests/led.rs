@@ -168,7 +168,9 @@ fn the_fast_tick_does_not_relight_the_case_through_a_shutdown() {
     a.tick_ms(2_000);
 
     a.apply(Action::PowerHold);
-    a.apply(Action::GbaDown(Btn::Down));
+    for _ in 0..PowerChoice::PowerOff.index() {
+        a.apply(Action::GbaDown(Btn::Down));
+    }
     a.apply(Action::GbaDown(Btn::A));
     assert_eq!(
         led.load(Ordering::Relaxed),

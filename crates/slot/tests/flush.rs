@@ -10,6 +10,7 @@ use slot::persist::Snapshot;
 use slot_input::{Action, Btn};
 use slot_power::{Battery, Charge, LedState};
 use slot_store::{read_slot_state, Core, Platform, StateRing};
+use slot_ui::PowerChoice;
 
 fn unknown(percent: u8) -> Battery {
     Battery {
@@ -93,9 +94,11 @@ fn opening_the_menu_flushes_and_the_choice_powers_off() {
         "durable before the user has read a single row"
     );
 
-    a.apply(Action::GbaDown(Btn::Down));
+    for _ in 0..PowerChoice::PowerOff.index() {
+        a.apply(Action::GbaDown(Btn::Down));
+    }
     a.apply(Action::GbaDown(Btn::A));
-    assert!(a.powering_off(), "Power Off is the second row");
+    assert!(a.powering_off(), "Power Off is the last row");
     assert_eq!(
         read_slot_state(d.path()).cart,
         Some("Emerald".into()),

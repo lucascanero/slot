@@ -127,6 +127,11 @@ pub fn run() {
             frontend.poweroff();
             return;
         }
+        if frontend.exiting() {
+            frontend.exit();
+            eprintln!("slot: exit to the menu");
+            return;
+        }
         frontend.step_emulator(pacer.period, STEP_TIMEOUT);
         frontend.render(&mut compositor, window);
         let swap = Instant::now();

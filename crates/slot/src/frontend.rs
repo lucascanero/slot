@@ -526,6 +526,14 @@ impl Frontend {
         self.session.app().ready_to_restart()
     }
 
+    pub fn exiting(&self) -> bool {
+        self.session.app().ready_to_exit()
+    }
+
+    pub fn exit(&mut self) {
+        self.session.app_mut().exit();
+    }
+
     pub fn restart(&mut self) {
         self.session.app_mut().restart();
     }
@@ -583,6 +591,7 @@ impl UiFaces {
                 .iter()
                 .map(|c| {
                     menu_face(match c {
+                        PowerChoice::Exit => "Exiting",
                         PowerChoice::Restart => "Restarting",
                         PowerChoice::PowerOff => "Powering Down",
                     })

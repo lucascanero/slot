@@ -295,6 +295,7 @@ pub struct App {
     starting: Option<LinkStarting>,
     link_transport: Option<(u16, Box<dyn LinkChannel>)>,
     restarting: bool,
+    exiting: bool,
     act_at: Millis,
     root: Option<PathBuf>,
     state: SlotState,
@@ -420,6 +421,7 @@ impl App {
             starting: None,
             link_transport: None,
             restarting: false,
+            exiting: false,
             act_at: 0,
             root: None,
             state: SlotState::default(),
@@ -1064,7 +1066,22 @@ impl App {
     }
 
     pub fn shutting_down(&self) -> bool {
-        self.powering_off || self.restarting
+        self.powering_off || self.restarting || self.exiting
+    }
+
+    pub fn exiting(&self) -> bool {
+        self.exiting
+    }
+
+    pub fn ready_to_exit(&self) -> bool {
+        self.exiting && self.now() >= self.act_at
+    }
+
+    pub fn exit(&mut self) {
+        self.settle_saves();
+        if let Some(power) = &mut self.power {
+            power.release();
+        }
     }
 
     pub fn restarting(&self) -> bool {
@@ -1959,7 +1976,9 @@ impl App {
                 h: OUT_H as f32,
                 colour: [0.0, 0.0, 0.0, 1.0],
             });
-            let which = if self.restarting {
+            let which = if self.exiting {
+                PowerChoice::Exit
+            } else if self.restarting {
                 PowerChoice::Restart
             } else {
                 PowerChoice::PowerOff
@@ -2621,6 +2640,10 @@ impl App {
                 self.power_menu = None;
                 self.close_game_menu();
                 match PowerChoice::ALL[index] {
+                    PowerChoice::Exit => {
+                        self.exiting = true;
+                        self.act_at = self.now() + SHUTDOWN_SHOW_MS;
+                    }
                     PowerChoice::Restart => {
                         self.restarting = true;
                         self.act_at = self.now() + SHUTDOWN_SHOW_MS;

@@ -76,6 +76,11 @@ impl ApplicationHandler for Slot {
                     events.exit();
                     return;
                 }
+                if self.frontend.exiting() {
+                    self.frontend.exit();
+                    events.exit();
+                    return;
+                }
                 if let Some(left) = FRAME.checked_sub(began.elapsed()) {
                     std::thread::sleep(left);
                 }

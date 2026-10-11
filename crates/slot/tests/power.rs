@@ -173,7 +173,9 @@ fn a_power_off_draws_a_shutdown_screen_over_everything() {
     let d = tmp_root_with_carts(&["Emerald"]);
     let mut a = app_playing_in(d.path(), "Emerald");
     a.apply(Action::PowerHold);
-    a.apply(Action::GbaDown(Btn::Down));
+    for _ in 0..PowerChoice::PowerOff.index() {
+        a.apply(Action::GbaDown(Btn::Down));
+    }
     a.apply(Action::GbaDown(Btn::A));
 
     let mut out = Vec::new();
@@ -198,7 +200,7 @@ fn a_hold_opens_the_menu_and_commits_nothing() {
     let d = tmp_root_with_carts(&["Emerald"]);
     let mut a = app_playing_in(d.path(), "Emerald");
     a.apply(Action::PowerHold);
-    assert_eq!(a.power_menu(), Some(0), "the menu opens on Restart");
+    assert_eq!(a.power_menu(), Some(0), "the menu opens on Exit");
     assert!(!a.powering_off() && !a.restarting());
     assert!(
         StateRing::new(d.path(), Platform::Gba, Core::Mgba, "Emerald")
@@ -241,7 +243,7 @@ fn b_leaves_the_menu_without_doing_anything() {
 
 #[test]
 fn each_row_commits_to_its_own_outcome() {
-    for (down, want) in [(0, "restart"), (1, "off")] {
+    for (down, want) in [(0, "exit"), (1, "restart"), (2, "off")] {
         let d = tmp_root_with_carts(&["Emerald"]);
         let mut a = app_playing_in(d.path(), "Emerald");
         a.apply(Action::PowerHold);
@@ -255,10 +257,31 @@ fn each_row_commits_to_its_own_outcome() {
             "{want}: the menu closes on the choice"
         );
         match want {
-            "restart" => assert!(a.restarting() && !a.powering_off()),
-            _ => assert!(a.powering_off() && !a.restarting()),
+            "exit" => assert!(a.exiting() && !a.restarting() && !a.powering_off()),
+            "restart" => assert!(a.restarting() && !a.powering_off() && !a.exiting()),
+            _ => assert!(a.powering_off() && !a.restarting() && !a.exiting()),
         }
     }
+}
+
+#[test]
+fn exit_shows_its_screen_first_and_leaves_the_resume_on_the_card() {
+    let d = tmp_root_with_carts(&["Emerald"]);
+    let mut a = app_playing_in(d.path(), "Emerald");
+    assert!(matches!(PowerChoice::ALL[0], PowerChoice::Exit));
+    a.apply(Action::PowerHold);
+    a.apply(Action::GbaDown(Btn::A));
+    assert!(a.exiting());
+    assert!(!a.ready_to_exit(), "the exit screen shows before slot goes");
+    assert!(a.shutting_down());
+    a.exit();
+    assert!(
+        StateRing::new(d.path(), Platform::Gba, Core::Mgba, "Emerald")
+            .read_resume()
+            .unwrap()
+            .is_some(),
+        "the game was left without a resume point"
+    );
 }
 
 #[test]
@@ -266,7 +289,9 @@ fn the_shutdown_screen_is_up_before_the_machine_may_stop() {
     let d = tmp_root_with_carts(&["Emerald"]);
     let mut a = app_playing_in(d.path(), "Emerald");
     a.apply(Action::PowerHold);
-    a.apply(Action::GbaDown(Btn::Down));
+    for _ in 0..PowerChoice::PowerOff.index() {
+        a.apply(Action::GbaDown(Btn::Down));
+    }
     a.apply(Action::GbaDown(Btn::A));
 
     assert!(a.powering_off(), "the choice decides immediately");
@@ -330,9 +355,11 @@ fn a_committed_shutdown_holds_the_core_still() {
     play(&mut s, &mut now);
 
     hold_power(&mut s, &mut now);
-    s.app_mut().apply(Action::GbaDown(Btn::Down));
+    for _ in 0..PowerChoice::PowerOff.index() {
+        s.app_mut().apply(Action::GbaDown(Btn::Down));
+    }
     s.app_mut().apply(Action::GbaDown(Btn::A));
-    assert!(s.app().powering_off(), "Power Off is the second row");
+    assert!(s.app().powering_off(), "Power Off is the last row");
     s.update(DT);
     await_paused(&mut s);
 }
