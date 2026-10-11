@@ -2,7 +2,6 @@
 **/*.rs.bk
 *.pdb
 
-/docs/
 /CLAUDE.md
 /.ralph/
 /.superpowers/
@@ -18,6 +17,7 @@
 /target-device
 /target-verify
 /dist-device
+/dist-brick
 
 # Parallel implementation worktrees, never content.
 /.worktrees
