@@ -1,5 +1,7 @@
 use std::path::{Path, PathBuf};
 
+use slot_store::Layout;
+
 pub const DIRS: [&str; 20] = [
     "BIOS",
     "Config",
@@ -23,8 +25,32 @@ pub const DIRS: [&str; 20] = [
     "Wallpapers",
 ];
 
+pub const DATA_DIRS: [&str; 15] = [
+    "BIOS",
+    "Config",
+    "Labels",
+    "Labels/GBA",
+    "Labels/GB",
+    "Labels/GBC",
+    "Saves",
+    "Saves/GBA",
+    "Saves/GB",
+    "Saves/GBC",
+    "States",
+    "States/GBA",
+    "States/GB",
+    "States/GBC",
+    "Wallpapers",
+];
+
 pub fn ensure(root: &Path) {
-    for sub in DIRS {
+    ensure_layout(&Layout::for_root(root));
+}
+
+pub fn ensure_layout(layout: &Layout) {
+    let root = layout.data();
+    let dirs: &[&str] = if layout.is_flat() { &DIRS } else { &DATA_DIRS };
+    for sub in dirs {
         let _ = std::fs::create_dir_all(root.join(sub));
     }
     if let Err(e) = slot_store::move_config(root) {
@@ -33,7 +59,7 @@ pub fn ensure(root: &Path) {
 }
 
 pub fn bios_dir(root: &Path) -> PathBuf {
-    root.join("BIOS")
+    Layout::for_root(root).bios_dir()
 }
 
 const BIOS_FILE: &str = "gba_bios.bin";

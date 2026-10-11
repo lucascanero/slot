@@ -1,10 +1,10 @@
-use slot::bezel::{pick, BEZELS};
+use slot::bezel::{bezel_dir, pick};
 
 fn card(files: &[&str]) -> tempfile::TempDir {
     let d = tempfile::tempdir().unwrap();
-    std::fs::create_dir_all(d.path().join(BEZELS)).unwrap();
+    std::fs::create_dir_all(bezel_dir(d.path())).unwrap();
     for f in files {
-        std::fs::write(d.path().join(BEZELS).join(f), b"").unwrap();
+        std::fs::write(bezel_dir(d.path()).join(f), b"").unwrap();
     }
     d
 }

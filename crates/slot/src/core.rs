@@ -20,7 +20,7 @@ fn candidates(root: &Path, core: Core) -> Vec<PathBuf> {
         return vec![PathBuf::from(named)];
     }
     let name = dylib_name(core);
-    let mut paths = vec![root.join("System").join(&name)];
+    let mut paths = vec![slot_store::Layout::for_root(root).app().join(&name)];
     if let Some(dir) = std::env::current_exe()
         .ok()
         .and_then(|exe| exe.parent().map(Path::to_path_buf))

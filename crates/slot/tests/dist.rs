@@ -46,3 +46,19 @@ fn a_booted_app_root_has_the_same_folders() {
         assert!(d.path().join(name).is_dir(), "app root is missing {name}");
     }
 }
+
+#[test]
+fn a_stockmix_card_gets_the_data_folders_and_no_rom_or_system_folders() {
+    let d = tempdir().unwrap();
+    let layout = slot_store::Layout::stockmix(d.path(), &d.path().join("Apps/Slot"));
+    slot::root::ensure_layout(&layout);
+    for name in slot::root::DATA_DIRS {
+        assert!(
+            d.path().join("Slot").join(name).is_dir(),
+            "{name} was not created"
+        );
+    }
+    assert!(!d.path().join("Roms").exists(), "ensure made a Roms folder");
+    assert!(!d.path().join("Slot/Games").exists());
+    assert!(!d.path().join("Slot/System").exists());
+}

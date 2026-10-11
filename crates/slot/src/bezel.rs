@@ -1,6 +1,10 @@
 use std::path::{Path, PathBuf};
 
-pub const BEZELS: &str = "System/bezels";
+pub const BEZELS: &str = "bezels";
+
+pub fn bezel_dir(root: &Path) -> PathBuf {
+    slot_store::Layout::for_root(root).app().join(BEZELS)
+}
 
 fn dims(path: &Path) -> Option<(u32, u32)> {
     if !path.extension()?.eq_ignore_ascii_case("png") {
@@ -12,7 +16,7 @@ fn dims(path: &Path) -> Option<(u32, u32)> {
 }
 
 pub fn pick(root: &Path, panel: (u32, u32)) -> Option<PathBuf> {
-    let mut fits: Vec<((u32, u32), PathBuf)> = std::fs::read_dir(root.join(BEZELS))
+    let mut fits: Vec<((u32, u32), PathBuf)> = std::fs::read_dir(bezel_dir(root))
         .ok()?
         .flatten()
         .map(|e| e.path())

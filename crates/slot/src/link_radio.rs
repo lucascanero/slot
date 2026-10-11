@@ -89,18 +89,18 @@ fn queue() -> &'static Sender<RadioJob> {
 }
 
 #[cfg(any(feature = "device", test))]
-fn link_command(root: &Path, verb: &str) -> Command {
+fn link_command(app: &Path, verb: &str) -> Command {
     let mut cmd = Command::new("/bin/sh");
-    cmd.arg(root.join("System/slotlink.sh"))
-        .arg("link")
-        .arg(verb);
+    cmd.arg(app.join("slotlink.sh")).arg("link").arg(verb);
     cmd
 }
 
 #[cfg(feature = "device")]
 fn link(verb: &str) -> Command {
-    let root = std::env::var_os("SLOT_ROOT").unwrap_or_else(|| "/mnt/sdcard".into());
-    link_command(Path::new(&root), verb)
+    let app = slot_store::Layout::installed()
+        .map(|l| l.app().to_path_buf())
+        .unwrap_or_else(slot_store::app_dir);
+    link_command(&app, verb)
 }
 
 #[cfg(feature = "device")]
@@ -184,9 +184,10 @@ mod tests {
     #[test]
     fn a_link_runs_the_cards_script_through_sh() {
         let d = tempfile::tempdir().unwrap();
-        let script = d.path().join("System/slotlink.sh");
+        let app = d.path().join("System");
+        let script = app.join("slotlink.sh");
         assert_eq!(
-            argv(&link_command(d.path(), "host")),
+            argv(&link_command(&app, "host")),
             ["/bin/sh", script.to_str().unwrap(), "link", "host"]
         );
     }

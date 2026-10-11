@@ -56,6 +56,11 @@ impl From<std::io::Error> for StoreError {
 }
 
 pub fn scan(root: &Path) -> Result<Vec<Cart>, StoreError> {
+    scan_in(&crate::layout::Layout::for_root(root))
+}
+
+pub fn scan_in(layout: &crate::layout::Layout) -> Result<Vec<Cart>, StoreError> {
+    let root = layout.data();
     let read = |file: &str| std::fs::read_to_string(root.join(file)).unwrap_or_default();
     let shells = crate::cart_shell::layered(
         &read(crate::CART_SHELL_FILE),
@@ -63,7 +68,7 @@ pub fn scan(root: &Path) -> Result<Vec<Cart>, StoreError> {
     );
     let mut carts = Vec::new();
     for platform in Platform::ALL {
-        let dir = root.join("Games").join(platform.dir_name());
+        let dir = layout.roms(platform);
         let entries = match std::fs::read_dir(&dir) {
             Ok(d) => d,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,

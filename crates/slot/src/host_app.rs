@@ -21,7 +21,7 @@ impl Slot {
     fn new() -> Self {
         Slot {
             gfx: None,
-            frontend: Frontend::boot(Box::new(SimPlatform::new())),
+            frontend: Frontend::boot(Box::new(host_platform())),
             input: HostInput::new(),
         }
     }
@@ -97,4 +97,14 @@ pub fn run() {
     if let Err(e) = events.run_app(&mut Slot::new()) {
         eprintln!("slot: {e}");
     }
+}
+
+fn host_platform() -> SimPlatform {
+    let Some(sd) = std::env::var_os("SLOT_SD") else {
+        return SimPlatform::new();
+    };
+    let layout = slot_store::Layout::stockmix(std::path::Path::new(&sd), &slot_store::app_dir());
+    let root = layout.data().to_path_buf();
+    layout.install();
+    SimPlatform::at(root)
 }

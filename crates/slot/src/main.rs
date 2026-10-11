@@ -5,12 +5,20 @@ mod host_app;
 
 fn main() {
     let mut args = std::env::args().skip(1);
-    if args.next().as_deref() == Some("--init-root") {
+    let flag = args.next();
+    if let Some(flag @ ("--init-root" | "--init-sd")) = flag.as_deref() {
         let Some(dir) = args.next() else {
-            eprintln!("slot: --init-root needs a directory");
+            eprintln!("slot: {flag} needs a directory");
             std::process::exit(2);
         };
-        slot::root::ensure(std::path::Path::new(&dir));
+        let dir = std::path::Path::new(&dir);
+        match flag {
+            "--init-sd" => slot::root::ensure_layout(&slot_store::Layout::stockmix(
+                dir,
+                &dir.join("Apps/Slot"),
+            )),
+            _ => slot::root::ensure(dir),
+        }
         return;
     }
     slot::crash::install();
