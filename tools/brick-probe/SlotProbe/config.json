@@ -1,0 +1,6 @@
+{
+    "label": "SlotProbe",
+    "icon": "",
+    "launch": "launch.sh",
+    "description": "Slot hardware probe (60 s)"
+}
