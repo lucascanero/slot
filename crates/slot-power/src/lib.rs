@@ -1,4 +1,5 @@
 mod device;
+mod mixer;
 mod motor;
 mod power;
 mod sim;
@@ -8,6 +9,7 @@ pub use device::{
     record_first_frame, trace_first_frame, uptime_seconds, DevicePlatform, BACKLIGHT,
     LED_SCALE_F1F2, LED_STATIC, MOTOR_MAX_UV, MOTOR_MIN_UV, RUMBLE_GPIO,
 };
+pub use mixer::{parse_values, Amixer, CliAmixer, HwVolume, LOUD};
 pub use motor::Motor;
 pub use power::Power;
 pub use sim::SimPlatform;

@@ -214,6 +214,7 @@ pub struct DevicePlatform {
     leds: Option<Leds>,
     jack: Arc<AtomicBool>,
     brightness_before: Option<u32>,
+    volume: Option<crate::mixer::HwVolume>,
 }
 
 impl DevicePlatform {
@@ -222,6 +223,10 @@ impl DevicePlatform {
         p.brightness_before = disp(&p.disp, DISP_LCD_GET_BRIGHTNESS, 0)
             .and_then(|v| u32::try_from(v).ok())
             .filter(|v| *v > 0);
+        p.volume = Some(crate::mixer::HwVolume::take(
+            &crate::mixer::CliAmixer,
+            Path::new("/sys"),
+        ));
         p
     }
 
@@ -235,6 +240,7 @@ impl DevicePlatform {
             leds: Leds::take(sysfs),
             jack,
             brightness_before: None,
+            volume: None,
         }
     }
 
@@ -386,6 +392,9 @@ impl Platform for DevicePlatform {
         }
         if let Some(level) = self.brightness_before {
             let _ = disp(&self.disp, DISP_LCD_SET_BRIGHTNESS, level);
+        }
+        if let Some(volume) = &self.volume {
+            volume.restore(&crate::mixer::CliAmixer);
         }
     }
 
