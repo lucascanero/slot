@@ -170,3 +170,19 @@ fn curl_and_wget_answers_mean_saved_missing_or_failed() {
         Got::Failed
     );
 }
+
+#[test]
+fn wget_is_asked_whenever_curl_neither_saved_nor_heard_a_404() {
+    use slot::label_fetch::settle;
+    assert_eq!(settle(Some(Got::Failed), || Got::Saved), Got::Saved);
+    assert_eq!(settle(Some(Got::Failed), || Got::Missing), Got::Missing);
+    assert_eq!(settle(None, || Got::Saved), Got::Saved, "no curl at all");
+    assert_eq!(
+        settle(Some(Got::Saved), || panic!("asked wget anyway")),
+        Got::Saved
+    );
+    assert_eq!(
+        settle(Some(Got::Missing), || panic!("asked wget anyway")),
+        Got::Missing
+    );
+}

@@ -178,6 +178,14 @@ pub fn wget_got(success: bool, stderr: &str) -> Got {
     }
 }
 
+pub fn settle(curl: Option<Got>, wget: impl FnOnce() -> Got) -> Got {
+    match curl {
+        Some(Got::Saved) => Got::Saved,
+        Some(Got::Missing) => Got::Missing,
+        _ => wget(),
+    }
+}
+
 pub struct CliGetter;
 
 impl Getter for CliGetter {
@@ -186,21 +194,22 @@ impl Getter for CliGetter {
             .args(["-fsSL", "--connect-timeout", "5", "--max-time", "30", "-o"])
             .arg(to)
             .arg(url)
-            .status();
-        if let Ok(status) = curl {
-            return curl_got(status.code());
-        }
-        match Command::new("wget")
-            .args(["-q", "-T", "20", "-O"])
-            .arg(to)
-            .arg(url)
-            .output()
-        {
-            Ok(out) => wget_got(out.status.success(), &String::from_utf8_lossy(&out.stderr)),
-            Err(e) => {
-                eprintln!("slot: labels: neither curl nor wget ran: {e}");
-                Got::Failed
+            .status()
+            .ok()
+            .map(|status| curl_got(status.code()));
+        settle(curl, || {
+            match Command::new("wget")
+                .args(["-q", "-T", "20", "-O"])
+                .arg(to)
+                .arg(url)
+                .output()
+            {
+                Ok(out) => wget_got(out.status.success(), &String::from_utf8_lossy(&out.stderr)),
+                Err(e) => {
+                    eprintln!("slot: labels: wget did not run: {e}");
+                    Got::Failed
+                }
             }
-        }
+        })
     }
 }
