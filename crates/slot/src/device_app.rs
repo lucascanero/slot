@@ -90,22 +90,8 @@ pub fn run() {
         }
     };
     slot::boot_time::mark("compositor");
-    let panel = surface.window_size();
-    let turned = panel.0 < panel.1;
-    let window = if turned { (panel.1, panel.0) } else { panel };
-    let ccw = std::env::var("SLOT_ROTATE")
-        .map(|v| v.trim().eq_ignore_ascii_case("ccw"))
-        .unwrap_or(false);
-    eprintln!(
-        "slot: panel {}x{}, canvas {}x{}, turned {turned}, ccw {ccw}",
-        panel.0, panel.1, window.0, window.1
-    );
-    if turned {
-        if let Err(e) = compositor.set_panel_turn(panel, ccw) {
-            eprintln!("slot: {e}");
-            return;
-        }
-    }
+    let window = surface.window_size();
+    eprintln!("slot: panel {}x{}", window.0, window.1);
     let platform = DevicePlatform::new(root.clone());
     eprintln!("slot: {}", platform.report());
     platform.trace_boot();
@@ -123,10 +109,6 @@ pub fn run() {
     slot::boot_time::mark("bezel");
     let mut input = DeviceInput::open(&root);
     slot::boot_time::mark("input");
-    let card = root.clone();
-    let _ = std::thread::Builder::new()
-        .name("slot-bootlogo".into())
-        .spawn(move || slot::bootlogo::refresh(&card));
     let mut drawn = false;
     frontend.drive_emulator();
     let mut pacer = Pacer::new();

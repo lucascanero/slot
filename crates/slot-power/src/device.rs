@@ -490,27 +490,6 @@ impl Platform for DevicePlatform {
         );
     }
 
-    fn relink_adb(&mut self) -> bool {
-        let gadget = self.sysfs.join("kernel/config/usb_gadget/g1/UDC");
-        if !gadget.is_file() {
-            return false;
-        }
-        let Some(udc) = first_dir(&self.sysfs.join("class/udc"), |_| true) else {
-            return false;
-        };
-        let Some(name) = udc.file_name().map(|n| n.to_string_lossy().into_owned()) else {
-            return false;
-        };
-        let _ = fs::write(&gadget, "\n");
-        match fs::write(&gadget, &name) {
-            Ok(()) => true,
-            Err(e) => {
-                eprintln!("slot: adb {}: {e}", gadget.display());
-                false
-            }
-        }
-    }
-
     fn set_rumble(&mut self, strength: u16) {
         let Some(motor) = &mut self.motor else {
             return;

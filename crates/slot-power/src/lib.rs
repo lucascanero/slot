@@ -49,10 +49,6 @@ pub trait Platform: Send {
     fn set_clock(&mut self, secs: i64);
     fn set_rumble(&mut self, strength: u16);
 
-    fn relink_adb(&mut self) -> bool {
-        false
-    }
-
     fn headphones(&self) -> bool {
         false
     }

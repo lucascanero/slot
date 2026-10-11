@@ -50,10 +50,6 @@ impl Power {
         self.platform.set_rumble(strength);
     }
 
-    pub fn relink_adb(&mut self) -> bool {
-        self.platform.relink_adb()
-    }
-
     pub fn poweroff(&mut self) -> ! {
         self.platform.poweroff()
     }

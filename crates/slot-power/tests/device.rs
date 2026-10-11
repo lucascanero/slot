@@ -286,34 +286,6 @@ fn a_tree_with_no_led_is_a_silent_no_op() {
     assert!(!d.path().join("class/leds").exists());
 }
 
-#[test]
-fn relinking_adb_rebinds_the_gadget_to_the_controller() {
-    let d = tempfile::tempdir().unwrap();
-    let udc = d.path().join("class/udc/5100000.udc-controller");
-    fs::create_dir_all(&udc).unwrap();
-    let gadget = d.path().join("kernel/config/usb_gadget/g1");
-    fs::create_dir_all(&gadget).unwrap();
-    fs::write(gadget.join("UDC"), "\n").unwrap();
-
-    let mut p = DevicePlatform::probe(d.path(), PathBuf::from("/mnt/sdcard"));
-    assert!(
-        p.relink_adb(),
-        "the gadget and a controller were both there"
-    );
-    assert_eq!(
-        fs::read_to_string(gadget.join("UDC")).unwrap().trim(),
-        "5100000.udc-controller"
-    );
-}
-
-#[test]
-fn relinking_adb_without_a_gadget_does_nothing() {
-    let d = tempfile::tempdir().unwrap();
-    fs::create_dir_all(d.path().join("class/udc/5100000.udc-controller")).unwrap();
-    let mut p = DevicePlatform::probe(d.path(), PathBuf::from("/mnt/sdcard"));
-    assert!(!p.relink_adb());
-}
-
 fn with_jack(d: &TempDir, level: &str) {
     let dir = d.path().join("kernel/debug");
     fs::create_dir_all(&dir).unwrap();
