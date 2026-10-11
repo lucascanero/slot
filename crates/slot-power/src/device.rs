@@ -4,13 +4,11 @@ use std::io::Write;
 use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::{Battery, Charge, LedState, Platform};
-
-const TOP_STEP: u32 = 9;
-
-const DEV_INPUT: &str = "/dev/input";
 
 const RUN_DIR: &str = "/run";
 
@@ -55,78 +53,112 @@ pub fn trace_first_frame() {
     record_first_frame(Path::new(RUN_DIR), &up);
 }
 
-const EV_FF: u16 = 0x15;
-const FF_RUMBLE: u16 = 0x50;
-const EVIOCSFF: c_ulong = 0x4030_4580;
+pub const BACKLIGHT: [u32; 10] = [0, 8, 16, 32, 48, 72, 96, 128, 176, 255];
 
-const DISPDBG_MAX: u32 = 255;
+const DISP_LCD_SET_BRIGHTNESS: c_ulong = 0x102;
+const DISP_LCD_GET_BRIGHTNESS: c_ulong = 0x103;
 
-enum Backlight {
-    Class(PathBuf),
-    Dispdbg(PathBuf),
+pub const RUMBLE_GPIO: u32 = 227;
+pub const MOTOR_MIN_UV: u32 = 500_000;
+pub const MOTOR_MAX_UV: u32 = 3_300_000;
+
+pub fn backlight_value(step: u8) -> u32 {
+    BACKLIGHT[usize::from(step).min(BACKLIGHT.len() - 1)]
 }
 
-enum Led {
-    Multi(PathBuf),
-    Mono { dir: PathBuf, max: u32 },
+pub fn motor_voltage(strength: u16) -> u32 {
+    match strength {
+        0 | u16::MAX => MOTOR_MAX_UV,
+        s => {
+            let span = u64::from(MOTOR_MAX_UV - MOTOR_MIN_UV);
+            MOTOR_MIN_UV + (u64::from(s) * span / u64::from(u16::MAX)) as u32
+        }
+    }
+}
+
+extern "C" {
+    fn ioctl(fd: c_int, request: c_ulong, ...) -> c_int;
+}
+
+fn disp(dev: &Path, request: c_ulong, value: u32) -> Option<i32> {
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(dev)
+        .ok()?;
+    let mut args: [c_ulong; 4] = [0, c_ulong::from(value), 0, 0];
+    let rc = unsafe { ioctl(file.as_raw_fd(), request, args.as_mut_ptr() as *mut c_void) };
+    (rc >= 0).then_some(rc)
+}
+
+struct GpioMotor {
+    value: PathBuf,
+    voltage: Option<PathBuf>,
+    running: bool,
+}
+
+impl GpioMotor {
+    fn open(sysfs: &Path) -> Option<GpioMotor> {
+        let gpio = sysfs.join("class/gpio");
+        let dir = gpio.join(format!("gpio{RUMBLE_GPIO}"));
+        if !dir.is_dir() {
+            let _ = fs::write(gpio.join("export"), RUMBLE_GPIO.to_string());
+        }
+        let value = dir.join("value");
+        if !value.is_file() {
+            return None;
+        }
+        let _ = fs::write(dir.join("direction"), "out");
+        let voltage = Some(sysfs.join("class/motor/voltage")).filter(|p| p.is_file());
+        Some(GpioMotor {
+            value,
+            voltage,
+            running: false,
+        })
+    }
+
+    fn play(&mut self, strength: u16) {
+        let on = strength > 0;
+        if on {
+            if let Some(v) = &self.voltage {
+                let _ = fs::write(v, motor_voltage(strength).to_string());
+            }
+        }
+        match fs::write(&self.value, if on { "1" } else { "0" }) {
+            Ok(()) => self.running = on,
+            Err(e) => eprintln!("slot: rumble: {e}"),
+        }
+    }
 }
 
 pub struct DevicePlatform {
     root: PathBuf,
-    sysfs: PathBuf,
-    backlight: Option<Backlight>,
-    max_brightness: u32,
+    disp: PathBuf,
     battery: Option<PathBuf>,
     rtc: Option<PathBuf>,
-    motor: Option<Motor>,
-    led: Option<Led>,
+    motor: Option<GpioMotor>,
+    jack: Arc<AtomicBool>,
+    brightness_before: Option<u32>,
 }
 
 impl DevicePlatform {
-    pub fn new(root: PathBuf) -> Self {
-        DevicePlatform::probe(Path::new("/sys"), root)
+    pub fn new(root: PathBuf, jack: Arc<AtomicBool>) -> Self {
+        let mut p = DevicePlatform::probe(Path::new("/sys"), Path::new("/dev/disp"), root, jack);
+        p.brightness_before = disp(&p.disp, DISP_LCD_GET_BRIGHTNESS, 0)
+            .and_then(|v| u32::try_from(v).ok())
+            .filter(|v| *v > 0);
+        p
     }
 
-    pub fn probe(sysfs: &Path, root: PathBuf) -> Self {
-        let class = first_dir(&sysfs.join("class/backlight"), |d| {
-            d.join("brightness").is_file()
-        });
-        let max_brightness = class
-            .as_ref()
-            .and_then(|d| read_number(&d.join("max_brightness")))
-            .unwrap_or(DISPDBG_MAX);
-        let backlight = match class {
-            Some(dir) => Some(Backlight::Class(dir)),
-            None => {
-                let dbg = sysfs.join("kernel/debug/dispdbg");
-                dbg.join("param")
-                    .is_file()
-                    .then_some(Backlight::Dispdbg(dbg))
-            }
-        };
-        let battery = first_dir(&sysfs.join("class/power_supply"), is_battery);
-        let rtc = first_dir(&sysfs.join("class/rtc"), |_| true);
-        let motor = Motor::open(sysfs);
-        let led = first_dir(&sysfs.join("class/leds"), |d| {
-            d.join("multi_intensity").is_file() || d.join("brightness").is_file()
-        })
-        .map(|dir| {
-            if dir.join("multi_intensity").is_file() {
-                Led::Multi(dir)
-            } else {
-                let max = read_number(&dir.join("max_brightness")).unwrap_or(255);
-                Led::Mono { dir, max }
-            }
-        });
+    pub fn probe(sysfs: &Path, disp: &Path, root: PathBuf, jack: Arc<AtomicBool>) -> Self {
         DevicePlatform {
             root,
-            sysfs: sysfs.to_path_buf(),
-            backlight,
-            max_brightness,
-            battery,
-            rtc,
-            motor,
-            led,
+            disp: disp.to_path_buf(),
+            battery: first_dir(&sysfs.join("class/power_supply"), is_battery),
+            rtc: first_dir(&sysfs.join("class/rtc"), |_| true),
+            motor: GpioMotor::open(sysfs),
+            jack,
+            brightness_before: None,
         }
     }
 
@@ -147,30 +179,22 @@ impl DevicePlatform {
     }
 
     pub fn report(&self) -> String {
-        let leaf = |p: &Path| {
-            p.file_name()
+        let leaf = |p: &Option<PathBuf>, absent: &str| match p {
+            Some(p) => p
+                .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_else(|| p.display().to_string())
-        };
-        let name = |p: &Option<PathBuf>, absent: &str| match p {
-            Some(p) => leaf(p),
+                .unwrap_or_else(|| p.display().to_string()),
             None => absent.to_string(),
         };
-        let backlight = match &self.backlight {
-            Some(Backlight::Class(dir)) => leaf(dir),
-            Some(Backlight::Dispdbg(_)) => "dispdbg".to_string(),
-            None => "no backlight".to_string(),
-        };
         let motor = match &self.motor {
-            Some(m) => format!("motor {}", m.name),
+            Some(_) => format!("motor gpio{RUMBLE_GPIO}"),
             None => "no motor".to_string(),
         };
         format!(
-            "backlight {} (0 to {}), battery {}, {}, {motor}",
-            backlight,
-            self.max_brightness,
-            name(&self.battery, "no battery"),
-            name(&self.rtc, "no rtc"),
+            "backlight {}, battery {}, {}, {motor}",
+            self.disp.display(),
+            leaf(&self.battery, "no battery"),
+            leaf(&self.rtc, "no rtc"),
         )
     }
 }
@@ -192,153 +216,11 @@ pub fn has_bit(mask: &str, bit: u16) -> bool {
     u64::from_str_radix(word, 16).is_ok_and(|w| w >> (bit % 64) & 1 == 1)
 }
 
-pub fn rumble_node(sysfs: &Path) -> Option<String> {
-    let dir = first_dir(&sysfs.join("class/input"), |node| {
-        fs::read_to_string(node.join("device/capabilities/ff"))
-            .is_ok_and(|ff| has_bit(&ff, FF_RUMBLE))
-    })?;
-    Some(dir.file_name()?.to_string_lossy().into_owned())
-}
-
 pub fn motor_change(strength: u16, running: bool) -> Option<bool> {
     match (strength > 0, running) {
         (true, false) => Some(true),
         (false, true) => Some(false),
         _ => None,
-    }
-}
-
-struct Motor {
-    node: fs::File,
-    name: String,
-    id: i16,
-    running: bool,
-}
-
-#[repr(C)]
-#[derive(Default)]
-struct FfTrigger {
-    button: u16,
-    interval: u16,
-}
-
-#[repr(C)]
-#[derive(Default)]
-struct FfReplay {
-    length: u16,
-    delay: u16,
-}
-
-#[repr(C)]
-#[derive(Default)]
-struct FfRumble {
-    strong: u16,
-    weak: u16,
-}
-
-#[repr(C)]
-struct FfEffect {
-    kind: u16,
-    id: i16,
-    direction: u16,
-    trigger: FfTrigger,
-    replay: FfReplay,
-    _align: u16,
-    rumble: FfRumble,
-    _tail: [u8; 28],
-}
-
-#[repr(C)]
-struct FfEvent {
-    sec: i64,
-    usec: i64,
-    kind: u16,
-    code: u16,
-    value: i32,
-}
-
-extern "C" {
-    fn ioctl(fd: c_int, request: c_ulong, ...) -> c_int;
-}
-
-fn upload(node: &fs::File, id: i16) -> Option<i16> {
-    let mut effect = FfEffect {
-        kind: FF_RUMBLE,
-        id,
-        direction: 0,
-        trigger: FfTrigger::default(),
-        replay: FfReplay::default(),
-        _align: 0,
-        rumble: FfRumble {
-            strong: u16::MAX,
-            weak: u16::MAX,
-        },
-        _tail: [0; 28],
-    };
-    let rc = unsafe {
-        ioctl(
-            node.as_raw_fd(),
-            EVIOCSFF,
-            &mut effect as *mut FfEffect as *mut c_void,
-        )
-    };
-    (rc >= 0).then_some(effect.id)
-}
-
-impl Motor {
-    fn open(sysfs: &Path) -> Option<Motor> {
-        let name = rumble_node(sysfs)?;
-        let node = fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(Path::new(DEV_INPUT).join(&name))
-            .map_err(|e| eprintln!("slot: rumble {name}: {e}"))
-            .ok()?;
-        let Some(id) = upload(&node, -1) else {
-            eprintln!("slot: rumble {name}: {}", std::io::Error::last_os_error());
-            return None;
-        };
-        Some(Motor {
-            node,
-            name,
-            id,
-            running: false,
-        })
-    }
-
-    fn play(&mut self, on: bool) {
-        if on {
-            match upload(&self.node, self.id).or_else(|| upload(&self.node, -1)) {
-                Some(id) => self.id = id,
-                None => eprintln!(
-                    "slot: rumble {}: {}",
-                    self.name,
-                    std::io::Error::last_os_error()
-                ),
-            }
-        }
-        let ev = FfEvent {
-            sec: 0,
-            usec: 0,
-            kind: EV_FF,
-            code: self.id as u16,
-            value: i32::from(on),
-        };
-        let bytes = unsafe {
-            std::slice::from_raw_parts(&ev as *const FfEvent as *const u8, size_of::<FfEvent>())
-        };
-        match (&self.node).write_all(bytes) {
-            Ok(()) => self.running = on,
-            Err(e) => eprintln!("slot: rumble: {e}"),
-        }
-    }
-}
-
-impl Drop for Motor {
-    fn drop(&mut self) {
-        if self.running {
-            self.play(false);
-        }
     }
 }
 
@@ -373,16 +255,9 @@ fn charge_at(dir: &Path) -> Charge {
     }
 }
 
-fn headphones_in(gpio: &str) -> bool {
-    gpio.lines()
-        .find(|l| l.contains("|Headphone detection"))
-        .and_then(|l| l.rsplit_once(')'))
-        .is_some_and(|(_, state)| state.split_whitespace().nth(1) == Some("hi"))
-}
-
 impl Platform for DevicePlatform {
     fn headphones(&self) -> bool {
-        fs::read_to_string(self.sysfs.join("kernel/debug/gpio")).is_ok_and(|g| headphones_in(&g))
+        self.jack.load(Ordering::Relaxed)
     }
 
     fn card_read_only(&self) -> bool {
@@ -390,24 +265,11 @@ impl Platform for DevicePlatform {
     }
 
     fn set_backlight(&mut self, step: u8) {
-        let Some(backlight) = &self.backlight else {
-            return;
-        };
-        let step = u32::from(step).min(TOP_STEP);
-        let value = self.max_brightness * step / TOP_STEP;
-        let write = |file: PathBuf, body: String| {
-            if let Err(e) = fs::write(&file, body) {
-                eprintln!("slot: {}: {e}", file.display());
-            }
-        };
-        match backlight {
-            Backlight::Class(dir) => write(dir.join("brightness"), value.to_string()),
-            Backlight::Dispdbg(dir) => {
-                write(dir.join("name"), "lcd0".to_string());
-                write(dir.join("command"), "setbl".to_string());
-                write(dir.join("param"), value.to_string());
-                write(dir.join("start"), "1".to_string());
-            }
+        if disp(&self.disp, DISP_LCD_SET_BRIGHTNESS, backlight_value(step)).is_none() {
+            eprintln!(
+                "slot: backlight: {} refused step {step}",
+                self.disp.display()
+            );
         }
     }
 
@@ -426,28 +288,7 @@ impl Platform for DevicePlatform {
             .map_or(Charge::Unknown, |dir| charge_at(dir))
     }
 
-    fn set_led(&mut self, state: LedState) {
-        let Some(led) = &self.led else {
-            return;
-        };
-        match led {
-            Led::Multi(dir) => {
-                let (r, g, b) = match state {
-                    LedState::Off => (0, 0, 0),
-                    LedState::Running | LedState::Charged => (0, 255, 0),
-                    LedState::Low => (255, 0, 0),
-                    LedState::Charging => (255, 140, 0),
-                };
-                let _ = fs::write(dir.join("multi_intensity"), format!("{r} {g} {b}\n"));
-                let _ = fs::write(dir.join("brightness"), "255\n");
-            }
-            Led::Mono { dir, max } => {
-                let on = !matches!(state, LedState::Off | LedState::Low);
-                let value = if on { *max } else { 0 };
-                let _ = fs::write(dir.join("brightness"), format!("{value}\n"));
-            }
-        }
-    }
+    fn set_led(&mut self, _state: LedState) {}
 
     fn restart(&mut self) -> ! {
         self.breadcrumb("restart: reached slot, about to sync");
@@ -494,8 +335,8 @@ impl Platform for DevicePlatform {
         let Some(motor) = &mut self.motor else {
             return;
         };
-        if let Some(on) = motor_change(strength, motor.running) {
-            motor.play(on);
+        if motor_change(strength, motor.running).is_some() {
+            motor.play(strength);
         }
     }
 }

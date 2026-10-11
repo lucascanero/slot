@@ -95,7 +95,7 @@ pub fn run() {
     let window = surface.window_size();
     eprintln!("slot: panel {}x{}", window.0, window.1);
     let jack = Arc::new(AtomicBool::new(false));
-    let platform = DevicePlatform::new(root.clone());
+    let platform = DevicePlatform::new(root.clone(), jack.clone());
     eprintln!("slot: {}", platform.report());
     platform.trace_boot();
     slot::boot_time::mark("platform");
