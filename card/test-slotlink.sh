@@ -2,7 +2,7 @@
 set -eu
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-SCRIPT="$HERE/System/slotlink.sh"
+SCRIPT="$HERE/Apps/Slot/slotlink.sh"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT HUP INT TERM
 FAILS=0

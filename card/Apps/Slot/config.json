@@ -1,0 +1,7 @@
+{
+    "label": "Slot",
+    "icon": "icon.png",
+    "iconsel": "icon.png",
+    "launch": "launch.sh",
+    "description": "Game Boy, Game Boy Color and Game Boy Advance shelf"
+}
