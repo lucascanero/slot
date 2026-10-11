@@ -77,3 +77,42 @@ fn the_stock_rom_folders_feed_the_shelf_and_nothing_else_does() {
     want.sort();
     assert_eq!(roms, want);
 }
+
+#[test]
+fn the_stock_box_art_stands_in_for_a_missing_label() {
+    let d = tempfile::tempdir().unwrap();
+    let l = Layout::stockmix(d.path(), &d.path().join("Apps/Slot"));
+    fs::create_dir_all(d.path().join("Roms/GBA")).unwrap();
+    fs::write(d.path().join("Roms/GBA/Emerald.gba"), vec![0u8; 0x100]).unwrap();
+    fs::write(d.path().join("Roms/GBA/Ruby.gba"), vec![0u8; 0x100]).unwrap();
+    fs::create_dir_all(d.path().join("Imgs/GBA")).unwrap();
+    fs::write(d.path().join("Imgs/GBA/Emerald.png"), b"png").unwrap();
+    fs::write(d.path().join("Imgs/GBA/Ruby.png"), b"png").unwrap();
+    fs::create_dir_all(d.path().join("Slot/Labels/GBA")).unwrap();
+    fs::write(d.path().join("Slot/Labels/GBA/ruby.png"), b"png").unwrap();
+    let carts = scan_in(&l).unwrap();
+    let label = |stem: &str| {
+        carts
+            .iter()
+            .find(|c| c.stem == stem)
+            .and_then(|c| c.label.clone())
+    };
+    assert_eq!(
+        label("Emerald"),
+        Some(d.path().join("Imgs/GBA/Emerald.png")),
+        "no slot label, so the stock box art"
+    );
+    assert_eq!(
+        label("Ruby"),
+        Some(d.path().join("Slot/Labels/GBA/ruby.png")),
+        "slot's own label wins over the box art"
+    );
+}
+
+#[test]
+fn only_the_stockmix_layout_has_stock_art() {
+    let sd = Path::new("/mnt/SDCARD");
+    let l = Layout::stockmix(sd, &sd.join("Apps/Slot"));
+    assert_eq!(l.art(Platform::Gbc), Some(sd.join("Imgs/GBC")));
+    assert_eq!(Layout::flat(Path::new("/card")).art(Platform::Gba), None);
+}

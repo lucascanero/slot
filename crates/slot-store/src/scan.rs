@@ -79,6 +79,8 @@ pub fn scan_in(layout: &crate::layout::Layout) -> Result<Vec<Cart>, StoreError> 
         };
         let labels_dir = root.join("Labels").join(platform.dir_name());
         let labels = listing(&labels_dir);
+        let art_dir = layout.art(platform);
+        let art = art_dir.as_deref().map(listing).unwrap_or_default();
         for entry in entries {
             let Ok(entry) = entry else {
                 continue;
@@ -90,9 +92,15 @@ pub fn scan_in(layout: &crate::layout::Layout) -> Result<Vec<Cart>, StoreError> 
             let Some(stem) = rom.file_stem().and_then(|s| s.to_str()) else {
                 continue;
             };
+            let key = format!("{stem}.png").to_lowercase();
             let label = labels
-                .get(&format!("{stem}.png").to_lowercase())
-                .map(|name| labels_dir.join(name));
+                .get(&key)
+                .map(|name| labels_dir.join(name))
+                .or_else(|| {
+                    art.get(&key)
+                        .zip(art_dir.as_ref())
+                        .map(|(name, dir)| dir.join(name))
+                });
             carts.push(Cart {
                 platform,
                 stem: stem.to_string(),

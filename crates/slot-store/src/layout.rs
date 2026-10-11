@@ -12,6 +12,7 @@ pub const BOOT_HOOK_NAME: &str = "slot-boot.sh";
 pub struct Layout {
     data: PathBuf,
     roms: PathBuf,
+    art: Option<PathBuf>,
     app: PathBuf,
     bios: Vec<PathBuf>,
     boot_hook: PathBuf,
@@ -25,6 +26,7 @@ impl Layout {
         Layout {
             data: root.to_path_buf(),
             roms: root.join("Games"),
+            art: None,
             app: root.join("System"),
             bios: vec![root.join("BIOS")],
             boot_hook: root.join(BOOT_HOOK_DIR).join(BOOT_HOOK_NAME),
@@ -36,6 +38,7 @@ impl Layout {
         let data = sd.join(DATA_DIR);
         Layout {
             roms: sd.join("Roms"),
+            art: Some(sd.join("Imgs")),
             app: app.to_path_buf(),
             bios: vec![
                 sd.join("BIOS"),
@@ -75,6 +78,10 @@ impl Layout {
 
     pub fn roms(&self, platform: Platform) -> PathBuf {
         self.roms.join(platform.dir_name())
+    }
+
+    pub fn art(&self, platform: Platform) -> Option<PathBuf> {
+        self.art.as_ref().map(|d| d.join(platform.dir_name()))
     }
 
     pub fn app(&self) -> &Path {
