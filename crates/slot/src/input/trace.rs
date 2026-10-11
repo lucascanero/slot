@@ -1,8 +1,8 @@
 use std::path::{Path, PathBuf};
 
 use super::evdev::{
-    code_to_btn, device_name, pick_devices, Ev, ABS_HAT0X, ABS_HAT0Y, ABS_RZ, ABS_Z, EV_ABS, EV_KEY,
-    EV_SW, SW_HEADPHONE_INSERT,
+    code_to_btn, device_name, pick_devices, Ev, ABS_HAT0X, ABS_HAT0Y, ABS_RZ, ABS_Z, EV_ABS,
+    EV_KEY, EV_SW, SW_HEADPHONE_INSERT,
 };
 
 pub const TRACE_VAR: &str = "SLOT_TRACE_INPUT";
