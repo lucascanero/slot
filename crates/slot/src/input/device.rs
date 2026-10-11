@@ -1,5 +1,6 @@
 use std::fs::File;
 use std::io::{Read, Write};
+use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -7,7 +8,8 @@ use std::time::Instant;
 use slot_input::{Btn, InputSource, Millis, RawEvent};
 
 use super::evdev::{
-    decode, device_name, pick_devices, to_raw, Ev, Hat, EVENT_BYTES, EV_ABS, EV_KEY, EV_SYN,
+    decode, device_name, pick_devices, to_raw, Ev, Sticks, ABS_RZ, ABS_Z, EVENT_BYTES, EV_ABS,
+    EV_KEY, EV_SYN,
 };
 use super::trace;
 
@@ -62,6 +64,15 @@ impl DeviceInput {
     }
 }
 
+const EVIOCGABS_BASE: libc::c_ulong = 0x8018_4540;
+
+pub fn abs_max(file: &File, code: u16) -> Option<i32> {
+    let mut info = [0i32; 6];
+    let request = EVIOCGABS_BASE + libc::c_ulong::from(code);
+    let rc = unsafe { libc::ioctl(file.as_raw_fd(), request as _, info.as_mut_ptr()) };
+    (rc == 0 && info[2] > 0).then_some(info[2])
+}
+
 const POLL_MS: u32 = 10;
 
 fn quicken_poll(sys: &Path, node: &Path) {
@@ -91,7 +102,6 @@ fn read_node(node: &Path, queue: &Mutex<Vec<RawEvent>>, trace: Option<&Trace>) {
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| node.display().to_string());
-    let mut hat = Hat::default();
     let mut file = match File::open(node) {
         Ok(f) => f,
         Err(e) => {
@@ -99,6 +109,10 @@ fn read_node(node: &Path, queue: &Mutex<Vec<RawEvent>>, trace: Option<&Trace>) {
             return;
         }
     };
+    let mut sticks = Sticks::new(
+        abs_max(&file, ABS_Z).unwrap_or(1),
+        abs_max(&file, ABS_RZ).unwrap_or(1),
+    );
     let mut buf = [0u8; EVENT_BYTES * 16];
     loop {
         let read = match file.read(&mut buf) {
@@ -119,7 +133,7 @@ fn read_node(node: &Path, queue: &Mutex<Vec<RawEvent>>, trace: Option<&Trace>) {
                 crate::latency::read();
             }
             match ev.kind {
-                EV_ABS => events.extend(hat.feed(ev)),
+                EV_ABS => events.extend(sticks.feed(ev)),
                 _ => events.extend(to_raw(ev)),
             }
         }

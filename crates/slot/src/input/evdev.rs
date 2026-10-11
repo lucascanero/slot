@@ -12,6 +12,9 @@ pub const SW_LID: u16 = 0x00;
 pub const EV_ABS: u16 = 0x03;
 pub const ABS_HAT0X: u16 = 0x10;
 pub const ABS_HAT0Y: u16 = 0x11;
+pub const ABS_Z: u16 = 0x02;
+pub const ABS_RZ: u16 = 0x05;
+pub const SW_HEADPHONE_INSERT: u16 = 0x02;
 
 #[derive(Default)]
 pub struct Hat {
@@ -43,6 +46,59 @@ impl Hat {
     }
 }
 
+pub struct Trigger {
+    btn: Btn,
+    max: i64,
+    held: bool,
+}
+
+impl Trigger {
+    pub fn new(btn: Btn, max: i32) -> Self {
+        Trigger {
+            btn,
+            max: i64::from(max.max(1)),
+            held: false,
+        }
+    }
+
+    pub fn feed(&mut self, value: i32) -> Option<RawEvent> {
+        let v = i64::from(value);
+        if !self.held && v * 2 > self.max {
+            self.held = true;
+            return Some(RawEvent::Down(self.btn));
+        }
+        if self.held && v * 4 < self.max {
+            self.held = false;
+            return Some(RawEvent::Up(self.btn));
+        }
+        None
+    }
+}
+
+pub struct Sticks {
+    hat: Hat,
+    l2: Trigger,
+    r2: Trigger,
+}
+
+impl Sticks {
+    pub fn new(l2_max: i32, r2_max: i32) -> Self {
+        Sticks {
+            hat: Hat::default(),
+            l2: Trigger::new(Btn::L2, l2_max),
+            r2: Trigger::new(Btn::R2, r2_max),
+        }
+    }
+
+    pub fn feed(&mut self, ev: Ev) -> Vec<RawEvent> {
+        match ev.code {
+            ABS_Z => self.l2.feed(ev.value).into_iter().collect(),
+            ABS_RZ => self.r2.feed(ev.value).into_iter().collect(),
+            _ => self.hat.feed(ev),
+        }
+    }
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct Ev {
     pub kind: u16,
@@ -60,11 +116,10 @@ pub fn decode(bytes: &[u8]) -> Option<Ev> {
 }
 
 pub fn to_raw(ev: Ev) -> Option<RawEvent> {
-    let btn = match ev.kind {
-        EV_KEY => code_to_btn(ev.code)?,
-        EV_SW if ev.code == SW_LID => Btn::Lid,
-        _ => return None,
-    };
+    if ev.kind != EV_KEY {
+        return None;
+    }
+    let btn = code_to_btn(ev.code)?;
     match ev.value {
         0 => Some(RawEvent::Up(btn)),
         1 => Some(RawEvent::Down(btn)),
@@ -74,17 +129,15 @@ pub fn to_raw(ev: Ev) -> Option<RawEvent> {
 
 pub fn code_to_btn(code: u16) -> Option<Btn> {
     Some(match code {
-        0x130 => Btn::A,
-        0x131 => Btn::B,
-        0x132 => Btn::Y,
-        0x133 => Btn::X,
-        0x134 => Btn::L1,
-        0x135 => Btn::R1,
-        0x136 => Btn::Select,
-        0x137 => Btn::Start,
-        0x138 => Btn::Menu,
-        0x13a => Btn::L2,
-        0x13b => Btn::R2,
+        0x131 => Btn::A,
+        0x130 => Btn::B,
+        0x134 => Btn::X,
+        0x133 => Btn::Y,
+        0x136 => Btn::L1,
+        0x137 => Btn::R1,
+        0x13a => Btn::Select,
+        0x13b => Btn::Start,
+        0x13c => Btn::Menu,
         115 => Btn::VolUp,
         114 => Btn::VolDown,
         116 => Btn::Power,
@@ -92,9 +145,8 @@ pub fn code_to_btn(code: u16) -> Option<Btn> {
     })
 }
 
-const WANTED: [u16; 15] = [
-    0x130, 0x131, 0x132, 0x133, 0x134, 0x135, 0x136, 0x137, 0x138, 0x13a, 0x13b, 0x162, 115, 114,
-    116,
+pub const WANTED: [u16; 12] = [
+    0x130, 0x131, 0x133, 0x134, 0x136, 0x137, 0x13a, 0x13b, 0x13c, 115, 114, 116,
 ];
 
 pub use slot_power::has_bit;

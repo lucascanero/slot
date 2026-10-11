@@ -17,7 +17,7 @@ fn packet(kind: u16, code: u16, value: i32) -> [u8; EVENT_BYTES] {
 const EV_KEY: u16 = 0x01;
 const EV_SW: u16 = 0x05;
 const EV_SYN: u16 = 0x00;
-const CODE_R1: u16 = 0x135;
+const CODE_R1: u16 = 0x137;
 const KEY_VOLUMEUP: u16 = 115;
 const SW_LID: u16 = 0x00;
 
@@ -37,15 +37,9 @@ fn autorepeat_is_not_a_press() {
 }
 
 #[test]
-fn the_lid_arrives_as_a_switch_rather_than_a_key() {
-    let shut = decode(&packet(EV_SW, SW_LID, 1)).and_then(to_raw);
-    assert_eq!(shut, Some(RawEvent::Down(Btn::Lid)));
-    let open = decode(&packet(EV_SW, SW_LID, 0)).and_then(to_raw);
-    assert_eq!(open, Some(RawEvent::Up(Btn::Lid)));
-    assert_ne!(
-        decode(&packet(EV_KEY, SW_LID, 1)).and_then(to_raw),
-        Some(RawEvent::Down(Btn::Lid))
-    );
+fn a_lid_switch_is_not_a_button_on_the_brick() {
+    assert_eq!(decode(&packet(EV_SW, SW_LID, 1)).and_then(to_raw), None);
+    assert_eq!(decode(&packet(EV_SW, SW_LID, 0)).and_then(to_raw), None);
 }
 
 #[test]
@@ -236,17 +230,15 @@ fn a_pad_already_polled_faster_is_left_alone() {
 #[test]
 fn the_pad_maps_by_the_codes_the_device_sends() {
     let expected = [
-        (0x130, Btn::A),
-        (0x131, Btn::B),
-        (0x132, Btn::Y),
-        (0x133, Btn::X),
-        (0x134, Btn::L1),
-        (0x135, Btn::R1),
-        (0x136, Btn::Select),
-        (0x137, Btn::Start),
-        (0x138, Btn::Menu),
-        (0x13a, Btn::L2),
-        (0x13b, Btn::R2),
+        (0x131, Btn::A),
+        (0x130, Btn::B),
+        (0x134, Btn::X),
+        (0x133, Btn::Y),
+        (0x136, Btn::L1),
+        (0x137, Btn::R1),
+        (0x13a, Btn::Select),
+        (0x13b, Btn::Start),
+        (0x13c, Btn::Menu),
         (115, Btn::VolUp),
         (114, Btn::VolDown),
         (116, Btn::Power),
@@ -329,4 +321,73 @@ fn a_hat_axis_is_traced_as_the_axis_it_is() {
     );
     assert!(line.contains("hat0y"), "{line}");
     assert!(!line.contains("ignored"), "{line}");
+}
+
+#[test]
+fn f1_and_f2_do_nothing() {
+    assert_eq!(slot::input::evdev::code_to_btn(0x13d), None);
+    assert_eq!(slot::input::evdev::code_to_btn(0x13e), None);
+}
+
+#[test]
+fn a_trigger_presses_past_half_and_lets_go_under_a_quarter() {
+    let mut t = slot::input::evdev::Trigger::new(Btn::L2, 255);
+    assert_eq!(t.feed(100), None);
+    assert_eq!(t.feed(130), Some(RawEvent::Down(Btn::L2)));
+    assert_eq!(t.feed(200), None);
+    assert_eq!(t.feed(70), None, "between a quarter and a half it holds");
+    assert_eq!(t.feed(60), Some(RawEvent::Up(Btn::L2)));
+    assert_eq!(t.feed(0), None);
+}
+
+#[test]
+fn a_trigger_with_no_known_range_is_pressed_by_anything_above_zero() {
+    let mut t = slot::input::evdev::Trigger::new(Btn::R2, 0);
+    assert_eq!(t.feed(1), Some(RawEvent::Down(Btn::R2)));
+    assert_eq!(t.feed(255), None);
+    assert_eq!(t.feed(0), Some(RawEvent::Up(Btn::R2)));
+}
+
+#[test]
+fn the_brick_triggers_arrive_on_z_and_rz_beside_the_hat() {
+    use slot::input::evdev::{Ev, Sticks, ABS_RZ, ABS_Z, EV_ABS};
+    let mut s = Sticks::new(255, 255);
+    let ev = |code, value| Ev {
+        kind: EV_ABS,
+        code,
+        value,
+    };
+    assert_eq!(s.feed(ev(ABS_Z, 255)), vec![RawEvent::Down(Btn::L2)]);
+    assert_eq!(s.feed(ev(ABS_RZ, 255)), vec![RawEvent::Down(Btn::R2)]);
+    assert_eq!(s.feed(ev(0x11, -1)), vec![RawEvent::Down(Btn::Up)]);
+    assert_eq!(s.feed(ev(ABS_Z, 0)), vec![RawEvent::Up(Btn::L2)]);
+    assert!(
+        s.feed(ev(0x00, 500)).is_empty(),
+        "the left stick is not a button"
+    );
+}
+
+#[test]
+fn the_triggers_and_the_jack_are_traced_by_name() {
+    use slot::input::evdev::{Ev, ABS_Z, EV_ABS};
+    let l2 = slot::input::trace::event_line(
+        "event3",
+        5,
+        Ev {
+            kind: EV_ABS,
+            code: ABS_Z,
+            value: 255,
+        },
+    );
+    assert!(l2.contains("l2"), "{l2}");
+    let jack = slot::input::trace::event_line(
+        "event2",
+        6,
+        Ev {
+            kind: EV_SW,
+            code: 0x02,
+            value: 1,
+        },
+    );
+    assert!(jack.contains("headphones"), "{jack}");
 }
