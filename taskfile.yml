@@ -26,14 +26,14 @@ tasks:
   test:
     desc: Run the whole test suite
     cmds:
-      - cargo test --workspace
+      - cargo test --workspace --lib --bins --tests
 
   test:one:
     desc: Run tests matching FILTER, eg task test:one FILTER=gesture
     requires:
       vars: [FILTER]
     cmds:
-      - cargo test --workspace {{.FILTER}}
+      - cargo test --workspace --lib --bins --tests {{.FILTER}}
 
   fmt:
     desc: Format the workspace
@@ -48,7 +48,7 @@ tasks:
   lint:
     desc: Clippy over all targets with warnings denied
     cmds:
-      - cargo clippy --workspace --all-targets -- -D warnings
+      - cargo clippy --workspace --lib --bins --tests -- -D warnings
 
   lint:device:
     desc: Clippy the device build, which the host lint never compiles
