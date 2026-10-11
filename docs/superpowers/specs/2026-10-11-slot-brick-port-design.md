@@ -51,14 +51,14 @@ O resultado é uma app que aparece no menu **Apps** do MainUI, com opção de ar
 
 | O quê | Onde | Porquê |
 |---|---|---|
-| Tampa / sensor hall (`hallkey`, `SW_LID`) | `slot/src/input/device.rs`, `evdev.rs` | O Brick não tem tampa |
+| Fontes de hardware da tampa: sensor hall (`hallkey`) e `SW_LID` | `slot/src/input/device.rs`, `evdev.rs`, `trace.rs` | O Brick não tem tampa. A ação interna `Btn::Lid`/`LidClose`/`LidOpen` fica: é o caminho de doze que os testes e o modo PC (tecla `]`) usam |
 | Backlight por `dispdbg` e por `/sys/class/backlight` | `slot-power/src/device.rs` | O Brick usa `/dev/disp` |
 | Rumble por evdev force-feedback | `slot-power/src/device.rs` | O Brick usa GPIO |
 | Auscultadores por `/sys/kernel/debug/gpio` | `slot-power/src/device.rs` | O Brick usa `EV_SW` |
 | LED `/sys/class/leds` | `slot-power/src/device.rs` | O Brick usa `/sys/class/led_anim` |
 | Instalação do boot logo da BaseOS | `slot/src/bootlogo.rs` e respetivos testes | Fora de âmbito |
 | `relink_adb` | `slot-power` e `app.rs` | Específico da BaseOS |
-| Rotação para painel em retrato (`SLOT_ROTATE`, `set_panel_turn`) | `device_app.rs`, `slot-gfx` | Só para o RG28XX |
+| Rotação para painel em retrato (`SLOT_ROTATE` e a chamada a `set_panel_turn`) | `device_app.rs` | Só para o RG28XX. O código GL de rotação em `slot-gfx/src/fbo.rs` fica parado: não é testável neste PC e não corre no Brick |
 | `card/System/launch_frontend.sh` e `card/System/led.sh` (e `card/test-led.sh`) | `card/` | Arranque e LED da BaseOS; substituídos por `launch.sh` e pelo LED em Rust |
 | `card/System/bootlogo.bmp` | `card/` | Boot logo fora de âmbito |
 
@@ -135,13 +135,13 @@ Mapa de botões do gamepad TrimUI (do `trimui_inputd`, confirmado no Brick):
 |---|---|
 | `set_backlight(step)` | `ioctl(/dev/disp, DISP_LCD_SET_BRIGHTNESS = 0x102, [0, valor, 0, 0])`; o passo 0 (usado só pelo doze) dá 0 e apaga o ecrã; os passos 1..9 (a escala do utilizador) dão `[8, 16, 32, 48, 72, 96, 128, 176, 255]`, a curva do NextUI para o Brick |
 | `battery()` / `charge()` | `power_supply` com `type == Battery` (o `axp2202-battery`); a deteção genérica atual mantém-se |
-| `set_led(state)` | `/sys/class/led_anim`: efeitos desligados, cor estática nos LEDs F1/F2 via `effect_rgb_hex_f1/f2` ou `frame_hex` (o mecanismo é confirmado no Brick); `max_scale_lr` e o LED `m` a 0 |
+| `set_led(state)` | `/sys/class/led_anim`: efeito estático (`effect_f1/f2 = 4`) com a cor do estado em `effect_rgb_hex_f1/f2`; brilho dos botões em `max_scale_f1f2`. A barra superior (`m`) e as laterais (`lr`) ficam em efeito estático a preto, sem mexer em `max_scale`, que pode ser global. O mecanismo é confirmado no Brick |
 | `set_rumble(strength)` | `/sys/class/motor/voltage` (escala entre 0,5 V e 3,3 V) e `/sys/class/gpio/gpio227/value` 1/0; exporta o GPIO 227 se ainda não estiver exportado |
 | `headphones()` | Lê o `AtomicBool` alimentado pelo input |
 | `card_read_only()` | Mantém-se (`/proc/mounts`) |
 | `set_clock(secs)` | Mantém-se (`date` + `hwclock -w -u`) |
 | `poweroff()` / `restart()` | `sync` e depois `poweroff` / `reboot` (comandos do sistema stock) |
-| novo `exit_to_menu()` | Repõe LEDs, brilho e volume de hardware e termina o processo com código 0 |
+| novo `release()` | Repõe LEDs, brilho e volume de hardware e pára o motor. O frontend chama-o em "Exit" antes de sair do loop principal; o processo termina com código 0 |
 
 Cores dos LEDs (iguais ao LED de energia do SP):
 
@@ -152,7 +152,7 @@ Cores dos LEDs (iguais ao LED de energia do SP):
 | Bateria fraca | vermelho `FF0000` |
 | Desligado | `000000` |
 
-- **Estado anterior dos LEDs**: ao arrancar, guardam-se os valores de `max_scale`, `max_scale_lr`, `max_scale_f1f2` e dos ficheiros `effect_*` que o Slot vai alterar. São repostos em `exit_to_menu()`.
+- **Estado anterior dos LEDs**: ao arrancar, guardam-se os valores legíveis de `max_scale_f1f2` e dos ficheiros `effect_*`, `effect_rgb_hex_*` e `effect_cycles_*` das zonas `f1`, `f2`, `m` e `lr`. São repostos em `release()`.
 - **Brilho anterior**: lido com `DISP_LCD_GET_BRIGHTNESS` e reposto ao sair.
 
 ### Áudio (`slot/src/audio`)
@@ -168,7 +168,7 @@ Cores dos LEDs (iguais ao LED de energia do SP):
 ### Botão power (substitui a tampa)
 
 - **Toque curto**: "doze". O ecrã apaga e o jogo pausa, como ao fechar a tampa no SP. Outro toque curto acorda.
-  - `Action::LidClose`/`LidOpen` deixam de existir; o doze passa a ser despoletado por `PowerTap`. O caminho `PowerTap` → `power_press()` já existe.
+  - No Brick, o doze é sempre despoletado por `PowerTap`, pelo caminho `PowerTap` → `power_press()` que já existe. Nenhum hardware gera `LidClose`/`LidOpen`; essas ações ficam só para os testes e o modo PC.
 - **Manter**: abre o menu de energia (já existe).
 - O desligar automático após o timeout em doze mantém-se.
 - Se o sistema stock tiver um daemon que também reage ao power ou ao volume enquanto uma app corre, o Slot pára esse comportamento durante a sessão (por exemplo com `SIGSTOP` e `SIGCONT` ao sair) ou ignora as teclas em conflito. A decisão fica para depois da verificação no Brick.
@@ -223,22 +223,24 @@ Os testes de cartão do autor (`card/test-slotlink.sh`) são mantidos e alargado
 
 ### Resolução de caminhos
 
-- Hoje o código usa um único `root` com subpastas fixas (`root.join("Games")`, `root.join("System")`, …). Isto passa para uma struct `Layout` em `slot-store`, com um método por pasta:
-  - `roms(platform)`
-  - `saves(platform)`
-  - `states(platform)`
-  - `labels(platform)`
-  - `config()`
-  - `wallpapers()`
-  - `bios_candidates()`
-  - `app()`, para cores e molduras
+- Hoje o código usa um único `root` com subpastas fixas (`root.join("Games")`, `root.join("System")`, …) e passa-o por muitas camadas e ~90 testes.
+- Nova struct `Layout` em `slot-store`. O `root` continua a ser a pasta de dados (`Slot/`), e `Config/`, `Saves/`, `States/`, `Labels/` e `Wallpapers/` continuam por baixo dele sem mudanças. O `Layout` só responde pelo que fica fora dessa pasta:
   - `data()`
-- `Layout::stockmix(sd: &Path, app: &Path)` constrói as pastas acima. Os testes usam o mesmo construtor com uma pasta temporária.
+  - `roms(platform)`
+  - `app()`: cores, molduras, `slotlink.sh` e o script de arranque
+  - `bios_dir()`: primeira pasta candidata com `gba_bios.bin`, senão `Slot/BIOS`
+  - `boot_hook()`
+- Construtores:
+  - `Layout::stockmix(sd, app)`: as pastas acima.
+  - `Layout::flat(root)`: o layout original do Slot. É usado pelos testes existentes e pelo modo PC sem `SLOT_SD`.
+- O dispositivo instala o seu `Layout` uma vez no arranque (`Layout::install`). O código que só tem o `root` obtém-no com `Layout::for_root(root)`, que devolve o instalado se for para esse `root` e `Layout::flat(root)` nos outros casos. Os testes novos chamam `Layout::stockmix` com uma pasta temporária.
 - **BIOS**: procura `gba_bios.bin` por ordem em:
   1. a pasta de BIOS do StockMix (caminho confirmado no Brick; candidatos: `/mnt/SDCARD/BIOS`, `/mnt/SDCARD/Bios`, `/mnt/SDCARD/RetroArch/.retroarch/system`)
   2. `Slot/BIOS/`
-- `--init-root` passa a criar só a árvore `Slot/`, sem criar nem mexer em `Roms/`.
-- Variáveis de ambiente para desenvolvimento: `SLOT_SD` (por omissão `/mnt/SDCARD`) e `SLOT_APP` (por omissão a pasta do binário). Substituem `SLOT_ROOT`.
+- Novo `--init-sd DIR`: cria só a árvore `DIR/Slot/`, sem criar nem mexer em `Roms/`. Usado pelo `dist:device`. O `--init-root` mantém-se para o modo PC.
+- Variáveis de ambiente:
+  - `SLOT_SD` (por omissão `/mnt/SDCARD`) e `SLOT_APP` (por omissão a pasta do binário) definem o layout StockMix.
+  - No modo PC, sem `SLOT_SD`, continua a valer `SLOT_ROOT` com o layout original.
 
 ### `launch.sh`
 
