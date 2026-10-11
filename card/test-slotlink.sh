@@ -39,6 +39,20 @@ reset() {
 	make_fake ip "$TMP/ip.log"
 	make_fake insmod "$TMP/mod.log"
 	make_fake legacy "$TMP/legacy.log"
+	make_fake restore "$TMP/restore.log"
+	make_fake killall "$TMP/killall.log"
+	cat > "$TMP/bin/iw" <<-SH
+		#!/bin/sh
+		printf '%s\n' "\$*" >> "$TMP/iw.log"
+		case "\$*" in
+		*"interface add"*) mkdir -p "$TMP/net/wlan1" ;;
+		*link*) [ -n "\${FAKE_FREQ:-}" ] && printf '\tfreq: %s\n' "\$FAKE_FREQ" ;;
+		esac
+		exit 0
+	SH
+	chmod 755 "$TMP/bin/iw"
+	rm -rf "$TMP/stock"
+	mkdir -p "$TMP/stock"
 }
 
 run() {
@@ -48,6 +62,8 @@ run() {
 		AGS_CTRL_DIR="$TMP/ctrl" AGS_PROC_MODULES="$TMP/proc-modules" \
 		AGS_WPA_SUPPLICANT="$TMP/bin/wpa_supplicant" AGS_WPA_CLI="$TMP/bin/wpa_cli" \
 		AGS_IP="$TMP/bin/ip" AGS_INSMOD="$TMP/bin/insmod" \
+		AGS_IW="$TMP/bin/iw" AGS_LINK_RESTORE="$TMP/bin/restore" \
+		AGS_LINK_STOCK_CTRL="$TMP/stock" AGS_KILLALL="$TMP/bin/killall" \
 		AGS_LINK_WAIT_S="${WAIT_S:-1}" AGS_LINK_PIN_WAIT_S="${WAIT_S:-1}" \
 		sh "$SCRIPT" "$@"
 }
@@ -56,7 +72,7 @@ reset yes
 run absent link host && rc=0 || rc=$?
 [ "$rc" = 0 ] || fail "host exited $rc"
 grep -q 'ap_scan=2' "$TMP/run/slotlink-ap.conf" || fail "host AP scans before starting"
-grep -q 'frequency=5745' "$TMP/run/slotlink-ap.conf" || fail "host AP not on 5745"
+grep -q 'frequency=2437' "$TMP/run/slotlink-ap.conf" || fail "host AP not on 2437 with wlan0 idle"
 grep -q 'mode=2' "$TMP/run/slotlink-ap.conf" || fail "host config is not an AP"
 grep -q 'addr add 10.42.0.1/24 dev wlan1' "$TMP/ip.log" || fail "host not addressed"
 [ -f "$TMP/run/slotlink.session" ] || fail "host left no session mark"
@@ -71,7 +87,7 @@ grep -q 'addr add' "$TMP/ip.log" 2>/dev/null && fail "dead AP was addressed"
 reset yes
 run absent link join && rc=0 || rc=$?
 [ "$rc" = 0 ] || fail "join exited $rc"
-grep -q 'scan_freq=5745' "$TMP/run/slotlink-sta.conf" || fail "join not pinned"
+grep -q 'scan_freq=2437' "$TMP/run/slotlink-sta.conf" || fail "join not pinned"
 grep -q 'addr add 10.42.0.2/24 dev wlan0' "$TMP/ip.log" || fail "join not addressed"
 
 reset yes
@@ -109,6 +125,44 @@ t1=$(date +%s)
 reset yes
 run absent link sideways 2>/dev/null && rc=0 || rc=$?
 [ "$rc" = 2 ] || fail "bad verb exited $rc, want 2"
+
+reset yes
+rmdir "$TMP/net/wlan1"
+run absent link host && rc=0 || rc=$?
+[ "$rc" = 0 ] || fail "host without wlan1 exited $rc"
+grep -q 'dev wlan0 interface add wlan1 type __ap' "$TMP/iw.log" 2>/dev/null \
+	|| fail "host did not make an AP interface"
+
+reset yes
+export FAKE_FREQ=2462
+run absent link host >/dev/null
+unset FAKE_FREQ
+grep -q 'frequency=2462' "$TMP/run/slotlink-ap.conf" || fail "host AP left the channel wlan0 is on"
+
+reset yes
+export FAKE_FREQ=2462
+run absent link join >/dev/null
+unset FAKE_FREQ
+grep -q 'scan_freq=2462 2437' "$TMP/run/slotlink-sta.conf" || fail "join did not look on its own channel first"
+
+reset yes
+: > "$TMP/stock/wlan0"
+run absent link join >/dev/null
+grep -q 'udhcpc' "$TMP/killall.log" 2>/dev/null || fail "join left the stock DHCP client running"
+run absent link down >/dev/null
+[ -e "$TMP/restore.log" ] || fail "down after a join left the console off its own WiFi"
+[ -e "$TMP/run/slotlink.wifi-taken" ] && fail "down left the wifi-taken mark"
+
+reset yes
+run absent link join >/dev/null
+run absent link down >/dev/null
+[ -e "$TMP/restore.log" ] && fail "down turned on a WiFi that was off before the link"
+
+reset yes
+: > "$TMP/stock/wlan0"
+run absent link host >/dev/null
+run absent link down >/dev/null
+[ -e "$TMP/restore.log" ] && fail "down after hosting on wlan1 restarted the WiFi"
 
 if [ "$FAILS" -eq 0 ]; then
 	echo "slotlink: all passed"

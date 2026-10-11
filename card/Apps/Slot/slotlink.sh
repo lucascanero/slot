@@ -2,11 +2,17 @@
 set -u
 
 NET="${AGS_NET_SYS:-/sys/class/net}"
-RUN="${AGS_RUN:-/run}"
+if [ -n "${AGS_RUN:-}" ]; then
+	RUN="$AGS_RUN"
+elif [ -d /run ] && [ -w /run ]; then
+	RUN=/run
+else
+	RUN=/tmp
+fi
 
 LINK_SSID="${AGS_LINK_SSID:-slotlink}"
 LINK_PSK="${AGS_LINK_PSK:-slotlink0}"
-LINK_FREQ="${AGS_LINK_FREQ:-5745}"
+LINK_FREQ="${AGS_LINK_FREQ:-2437}"
 LINK_HOST_IP="${AGS_LINK_HOST_IP:-10.42.0.1/24}"
 LINK_PEER_IP="${AGS_LINK_PEER_IP:-10.42.0.2/24}"
 LINK_WAIT_S="${AGS_LINK_WAIT_S:-10}"
@@ -15,6 +21,12 @@ LINK_RESCAN="${AGS_LINK_RESCAN:-2}"
 LINK_AP_GLOBAL="${AGS_LINK_AP_GLOBAL:-}"
 LINK_TRACE="${AGS_LINK_TRACE:-}"
 LINK_MARK="$RUN/slotlink.session"
+LINK_AP_IF="${AGS_LINK_AP_IF:-wlan1}"
+LINK_STOCK_CTRL="${AGS_LINK_STOCK_CTRL:-/etc/wifi/sockets}"
+LINK_RESTORE="${AGS_LINK_RESTORE:-wpa_supplicant -B -D nl80211 -iwlan0 -c /etc/wifi/wpa_supplicant.conf -O /etc/wifi/sockets; udhcpc -i wlan0 -b}"
+LINK_TAKEN="$RUN/slotlink.wifi-taken"
+IW="${AGS_IW:-iw}"
+KILLALL="${AGS_KILLALL:-killall}"
 
 WPA_SUPPLICANT="${AGS_WPA_SUPPLICANT:-wpa_supplicant}"
 WPA_CLI="${AGS_WPA_CLI:-wpa_cli}"
@@ -58,9 +70,23 @@ supplicant_stop() {
 	return 0
 }
 
+wlan0_freq() {
+	$IW dev wlan0 link 2>/dev/null | sed -n 's/^[[:space:]]*freq:[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -n 1
+}
+
+take_wlan0() {
+	if [ -e "$LINK_STOCK_CTRL/wlan0" ]; then
+		echo stock > "$LINK_TAKEN"
+		supplicant_stop "$LINK_STOCK_CTRL" wlan0
+	elif [ ! -f "$LINK_TAKEN" ]; then
+		: > "$LINK_TAKEN"
+	fi
+	$KILLALL udhcpc >/dev/null 2>&1 || true
+}
+
 link_clear() {
-	supplicant_stop "$RUN/wpa_ap" wlan1
-	$IP addr flush dev wlan1 2>/dev/null || true
+	supplicant_stop "$RUN/wpa_ap" "$LINK_AP_IF"
+	$IP addr flush dev "$LINK_AP_IF" 2>/dev/null || true
 	/bin/rm -f "$RUN/slotlink-ap.conf"
 	if [ -f "$RUN/slotlink-sta.conf" ]; then
 		supplicant_stop "$CTRL_DIR" wlan0
@@ -84,7 +110,7 @@ link_wait() {
 		if [ "$4" -gt 0 ] && [ "$p" -gt 0 ] && [ $((p % $4)) -eq 0 ]; then
 			case "$state" in
 			DISCONNECTED | INACTIVE | SCANNING)
-				$WPA_CLI -p "$1" -i "$2" scan ${5:+freq=$5} >/dev/null 2>&1
+				$WPA_CLI -p "$1" -i "$2" scan ${5:+freq=$(echo "$5" | tr ' ' ',')} >/dev/null 2>&1
 				;;
 			esac
 		fi
@@ -98,8 +124,16 @@ link_host() {
 	trace "host: asked"
 	link_clear
 	wifi_up
-	wait_dev wlan1 4 || return 1
+	if ! wait_dev "$LINK_AP_IF" 4; then
+		$IW dev wlan0 interface add "$LINK_AP_IF" type __ap >/dev/null 2>&1 || true
+		wait_dev "$LINK_AP_IF" 4 || return 1
+	fi
 	command -v "$WPA_SUPPLICANT" >/dev/null 2>&1 || return 1
+	ap_freq="$(wlan0_freq)"
+	ap_freq="${ap_freq:-$LINK_FREQ}"
+	if [ "$LINK_AP_IF" = wlan0 ]; then
+		take_wlan0
+	fi
 
 	/bin/mkdir -p "$RUN/wpa_ap"
 	{
@@ -111,7 +145,7 @@ link_host() {
 		echo 'network={'
 		echo "	ssid=\"$LINK_SSID\""
 		echo '	mode=2'
-		echo "	frequency=$LINK_FREQ"
+		echo "	frequency=$ap_freq"
 		echo '	key_mgmt=WPA-PSK'
 		echo '	proto=RSN'
 		echo '	pairwise=CCMP'
@@ -120,10 +154,10 @@ link_host() {
 	} > "$RUN/slotlink-ap.conf"
 	/bin/chmod 600 "$RUN/slotlink-ap.conf"
 
-	$IP link set wlan1 up 2>/dev/null || true
-	$WPA_SUPPLICANT -B -i wlan1 -c "$RUN/slotlink-ap.conf" -Dnl80211 >/dev/null 2>&1 || return 1
-	link_wait "$RUN/wpa_ap" wlan1 "$LINK_WAIT_S" 0 "" || return 1
-	$IP addr add "$LINK_HOST_IP" dev wlan1 2>/dev/null || true
+	$IP link set "$LINK_AP_IF" up 2>/dev/null || true
+	$WPA_SUPPLICANT -B -i "$LINK_AP_IF" -c "$RUN/slotlink-ap.conf" -Dnl80211 >/dev/null 2>&1 || return 1
+	link_wait "$RUN/wpa_ap" "$LINK_AP_IF" "$LINK_WAIT_S" 0 "" || return 1
+	$IP addr add "$LINK_HOST_IP" dev "$LINK_AP_IF" 2>/dev/null || true
 	trace "host: addressed"
 }
 
@@ -149,6 +183,12 @@ link_join() {
 	link_clear
 	wifi_up
 	[ -d "$NET/wlan0" ] || return 1
+	own="$(wlan0_freq)"
+	pinned="$LINK_FREQ"
+	if [ -n "$own" ] && [ "$own" != "$LINK_FREQ" ]; then
+		pinned="$own $LINK_FREQ"
+	fi
+	take_wlan0
 	/bin/mkdir -p "$CTRL_DIR"
 	$IP link set wlan0 up 2>/dev/null || true
 
@@ -156,7 +196,7 @@ link_join() {
 	attempt=1
 	while [ "$attempt" -le "$tries" ]; do
 		if [ "$attempt" -eq 1 ]; then
-			freq="$LINK_FREQ"
+			freq="$pinned"
 			bound="$LINK_PIN_WAIT_S"
 		else
 			freq=
@@ -181,9 +221,16 @@ link_join() {
 link_down() {
 	trace "down"
 	link_clear
-	$IP link set wlan1 down 2>/dev/null || true
+	$IP link set "$LINK_AP_IF" down 2>/dev/null || true
 	rmdir "$RUN/wpa_ap" 2>/dev/null || true
 	/bin/rm -f "$LINK_MARK"
+	if [ -f "$LINK_TAKEN" ]; then
+		if [ "$(cat "$LINK_TAKEN")" = stock ]; then
+			trace "restore: $LINK_RESTORE"
+			sh -c "$LINK_RESTORE" >/dev/null 2>&1 || true
+		fi
+		/bin/rm -f "$LINK_TAKEN"
+	fi
 	return 0
 }
 
@@ -191,7 +238,7 @@ link_warm() {
 	trace "warm"
 	wifi_up
 	[ -d "$NET/wlan0" ] || return 1
-	wait_dev wlan1 4
+	wait_dev "$LINK_AP_IF" 4
 }
 
 case "${1:-} ${2:-}" in
