@@ -201,6 +201,7 @@ fn a_card_from_before_the_settings_keeps_all_its_values() {
             rewind: true,
             gb_palettes: false,
             gb_palette: GbPalette::DEFAULT,
+            use_retroarch: false,
         }
     );
 }
@@ -401,4 +402,43 @@ fn a_missing_or_unknown_palette_falls_back_to_dmg_green() {
         assert!(!s.gb_palettes, "{bad:?} turned palettes on");
         assert_eq!(s.gb_palette, GbPalette::DEFAULT, "{bad:?}");
     }
+}
+
+#[test]
+fn use_retroarch_round_trips_as_its_own_line() {
+    let d = tmp_root();
+    let s = SlotState {
+        clock_set: true,
+        use_retroarch: true,
+        ..SlotState::default()
+    };
+    write_slot_state(d.path(), &s).unwrap();
+    assert_eq!(read_slot_state(d.path()), s);
+    let text = std::fs::read_to_string(d.path().join("Config/slot.state")).unwrap();
+    assert!(
+        text.lines().any(|l| l == "use_retroarch=1"),
+        "no use_retroarch=1 in {text:?}"
+    );
+}
+
+#[test]
+fn a_card_from_before_retroarch_mode_reads_it_as_off() {
+    let d = tmp_root();
+    let s = SlotState {
+        clock_set: true,
+        brightness: 7,
+        ..SlotState::default()
+    };
+    write_slot_state(d.path(), &s).unwrap();
+    let path = d.path().join("Config/slot.state");
+    let old: String = std::fs::read_to_string(&path)
+        .unwrap()
+        .lines()
+        .filter(|l| !l.starts_with("use_retroarch="))
+        .map(|l| format!("{l}\n"))
+        .collect();
+    std::fs::write(&path, old).unwrap();
+    let back = read_slot_state(d.path());
+    assert!(!back.use_retroarch, "an old card came back in RetroArch mode");
+    assert_eq!(back.brightness, 7, "the rest of an old card was thrown away");
 }
