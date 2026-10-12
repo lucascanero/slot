@@ -38,7 +38,9 @@ export PATH="$SCRIPTS:$SD/System/bin:$PATH:$RA_DIR"
 export LD_LIBRARY_PATH="/usr/trimui/lib:$SD/System/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
 config_dir() {
-	dir="$(sed -n 's/^rgui_config_directory = "\(.*\)"$/\1/p' "$RA_DIR/.retroarch/retroarch.cfg" 2> /dev/null | head -n 1)"
+	cfg="$RA_DIR/retroarch.cfg"
+	[ -f "$cfg" ] || cfg="$RA_DIR/.retroarch/retroarch.cfg"
+	dir="$(sed -n 's/^rgui_config_directory = "\(.*\)"$/\1/p' "$cfg" 2> /dev/null | head -n 1)"
 	case "$dir" in
 	"" | default) echo "$RA_DIR/.retroarch/config" ;;
 	"~/"*) echo "$RA_DIR/${dir#\~/}" ;;
@@ -82,7 +84,10 @@ if [ ! -e "$HOTKEY" ] && touch "$HOTKEY" 2> /dev/null; then
 	hotkey_made=1
 fi
 command -v ra_audio_switcher.sh > /dev/null 2>&1 && ra_audio_switcher.sh
-command -v cpufreq.sh > /dev/null 2>&1 && cpufreq.sh ondemand 2 6
+emu="$SD/Emus/$(basename "$(dirname "$rom")")"
+if [ "$mode" = game ] && [ -x "$emu/cpufreq.sh" ]; then
+	"$emu/cpufreq.sh" ondemand 2 6
+fi
 
 set --
 case "$link" in

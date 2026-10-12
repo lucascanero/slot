@@ -7,17 +7,17 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT HUP INT TERM
 
 RA="$TMP/sd/RetroArch"
-CFG="$RA/.retroarch/config"
+CFG="$RA/.retroarch/slotcfg"
 GAME="Pokémon - Emerald (U) [!] & Co's"
 ROM="$TMP/sd/Roms/GBA/$GAME.gba"
 CORE="$TMP/app/mgba_libretro.so"
 
 setup() {
 	rm -rf "$TMP/sd" "$TMP/app" "$TMP"/*.log "$TMP/ra_hotkey"
-	mkdir -p "$RA/.retroarch" "$TMP/sd/Roms/GBA" "$TMP/app" "$TMP/sd/System/usr/trimui/scripts"
+	mkdir -p "$RA/.retroarch" "$TMP/sd/Roms/GBA" "$TMP/app" "$TMP/sd/System/usr/trimui/scripts" "$TMP/sd/Emus/GBA"
 	: > "$ROM"
 	: > "$CORE"
-	echo 'rgui_config_directory = "~/.retroarch/config"' > "$RA/.retroarch/retroarch.cfg"
+	echo 'rgui_config_directory = "./.retroarch/slotcfg"' > "$RA/retroarch.cfg"
 	cat > "$RA/ra64.trimui" <<-SH
 		#!/bin/sh
 		{
@@ -29,13 +29,15 @@ setup() {
 		} >> "$TMP/ra.log"
 		exit \${RA_EXIT:-0}
 	SH
-	for s in ra_audio_switcher.sh cpufreq.sh; do
-		cat > "$TMP/sd/System/usr/trimui/scripts/$s" <<-SH
-			#!/bin/sh
-			echo "$s \$*" >> "$TMP/env.log"
-		SH
-	done
-	chmod +x "$RA/ra64.trimui" "$TMP/sd/System/usr/trimui/scripts/"*.sh
+	cat > "$TMP/sd/System/usr/trimui/scripts/ra_audio_switcher.sh" <<-SH
+		#!/bin/sh
+		echo "ra_audio_switcher.sh \$*" >> "$TMP/env.log"
+	SH
+	cat > "$TMP/sd/Emus/GBA/cpufreq.sh" <<-SH
+		#!/bin/sh
+		echo "Emus/GBA/cpufreq.sh \$*" >> "$TMP/env.log"
+	SH
+	chmod +x "$RA/ra64.trimui" "$TMP/sd/System/usr/trimui/scripts/"*.sh "$TMP/sd/Emus/GBA/cpufreq.sh"
 }
 
 request() {
@@ -61,7 +63,7 @@ grep -q "^lib=/usr/trimui/lib:$TMP/sd/System/lib" "$TMP/ra.log" || fail "the Sto
 grep -qx "hotkey=yes" "$TMP/ra.log" || fail "RetroArch ran without its hotkeys"
 [ ! -e "$TMP/ra_hotkey" ] || fail "the hotkey file slot made was left behind for Slot's MENU"
 grep -qx "ra_audio_switcher.sh " "$TMP/env.log" || fail "the audio switcher did not run"
-grep -qx "cpufreq.sh ondemand 2 6" "$TMP/env.log" || fail "the CPU was not set like a StockMix game"
+grep -qx "Emus/GBA/cpufreq.sh ondemand 2 6" "$TMP/env.log" || fail "the CPU was not set by the system's own cpufreq.sh, like a StockMix game"
 
 setup
 : > "$TMP/ra_hotkey"
