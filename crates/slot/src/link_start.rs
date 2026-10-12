@@ -13,6 +13,25 @@ pub const DEFAULT_LINK_PORT: u16 = 7211;
 
 const PORT_ENV: &str = "SLOT_LINK_PORT";
 
+const HOST_ENV: &str = "SLOT_LINK_HOST";
+
+pub fn link_host() -> String {
+    let Ok(raw) = std::env::var(HOST_ENV) else {
+        return HOST_ADDR.to_string();
+    };
+    let host = raw.trim();
+    if host.is_empty() {
+        return HOST_ADDR.to_string();
+    }
+    if host.parse::<std::net::IpAddr>().is_err() {
+        eprintln!(
+            "slot: {HOST_ENV}={raw:?} is not an address a link can meet on, using {HOST_ADDR}"
+        );
+        return HOST_ADDR.to_string();
+    }
+    host.to_string()
+}
+
 pub fn link_port() -> u16 {
     let Some(raw) = std::env::var_os(PORT_ENV) else {
         return DEFAULT_LINK_PORT;
@@ -115,14 +134,15 @@ pub struct LinkStarter {
 
 impl LinkStarter {
     pub fn spawn(role: LinkRole, port: u16) -> LinkStarter {
+        let host = link_host();
         LinkStarter::spawn_with(
             Box::new(link_radio::up),
             Box::new(link_radio::down),
             role,
             port,
             Box::new(move |port, cancel| match role {
-                LinkRole::Host => TcpLink::host_until(HOST_ADDR, port, HOST_BOUND, cancel),
-                LinkRole::Join => TcpLink::join_until(HOST_ADDR, port, HOST_BOUND, cancel),
+                LinkRole::Host => TcpLink::host_until(&host, port, HOST_BOUND, cancel),
+                LinkRole::Join => TcpLink::join_until(&host, port, HOST_BOUND, cancel),
             }),
         )
     }
@@ -137,6 +157,7 @@ impl LinkStarter {
         let (tx, rx) = channel();
         let cancel = Cancel::new();
         let flag = cancel.clone();
+        let host = link_host();
         std::thread::spawn(move || {
             let _ = tx.send(LinkProgress::At(LinkStep::Radio));
             if let Err(e) = radio_up(role, &flag) {
@@ -153,10 +174,10 @@ impl LinkStarter {
                 return;
             }
             let _ = tx.send(LinkProgress::At(LinkStep::Waiting));
-            eprintln!("slot: link: {role:?} using {HOST_ADDR}:{port}");
+            eprintln!("slot: link: {role:?} using {host}:{port}");
             match socket(port, &flag) {
                 Ok(link) => {
-                    eprintln!("slot: link: {role:?} connected on {HOST_ADDR}:{port}");
+                    eprintln!("slot: link: {role:?} connected on {host}:{port}");
                     if tx.send(LinkProgress::Ready(link)).is_err() {
                         eprintln!("slot: link: nobody left to hand it to, radio back down");
                         radio_down();
@@ -164,7 +185,7 @@ impl LinkStarter {
                 }
                 Err(e) => {
                     eprintln!(
-                        "slot: link: {role:?} failed on {HOST_ADDR}:{port}: {e} (kind {:?})",
+                        "slot: link: {role:?} failed on {host}:{port}: {e} (kind {:?})",
                         e.kind()
                     );
                     radio_down();
@@ -268,6 +289,31 @@ mod port_tests {
         std::env::set_var(PORT_ENV, "0");
         assert_eq!(link_port(), DEFAULT_LINK_PORT);
         std::env::remove_var(PORT_ENV);
+    }
+
+    #[test]
+    fn unset_host_means_the_address_the_link_network_gives_the_host() {
+        let _g = lock();
+        std::env::remove_var(HOST_ENV);
+        assert_eq!(link_host(), HOST_ADDR);
+    }
+
+    #[test]
+    fn a_host_in_the_environment_wins_so_a_pc_can_meet_a_brick() {
+        let _g = lock();
+        std::env::set_var(HOST_ENV, " 10.42.0.1 ");
+        assert_eq!(link_host(), "10.42.0.1");
+        std::env::remove_var(HOST_ENV);
+    }
+
+    #[test]
+    fn a_host_that_is_not_an_address_falls_back() {
+        let _g = lock();
+        for bad in ["", "   ", "brick", "10.42.0", "10.42.0.1:7211"] {
+            std::env::set_var(HOST_ENV, bad);
+            assert_eq!(link_host(), HOST_ADDR, "{bad:?} should not be taken");
+        }
+        std::env::remove_var(HOST_ENV);
     }
 }
 
