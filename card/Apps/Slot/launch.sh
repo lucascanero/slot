@@ -11,6 +11,7 @@ mkdir -p "$DATA/Config"
 [ -f "$DATA/slot.log" ] && mv -f "$DATA/slot.log" "$DATA/slot.log.1"
 : > "$DATA/slot.log"
 rm -f "$REQUEST" "$REQUEST.run"
+[ -f "$SD/trimui/.slot" ] && rm -rf "$SD/trimui"
 OLD_CORE="$(cat "$CORE_PATTERN" 2>/dev/null)"
 echo "|/bin/sh $APP/coresave.sh %p %s %e %t" > "$CORE_PATTERN" 2>/dev/null
 export SLOT_SD="$SD" SLOT_APP="$APP"

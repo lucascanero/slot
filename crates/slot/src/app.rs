@@ -66,6 +66,10 @@ const PLAY_HOLD_MS: Millis = 500;
 
 const SHUTDOWN_SHOW_MS: Millis = 250;
 
+const LOADING_FADE_S: f32 = 0.25;
+
+const HANDING_S: f32 = SEATED_AT + LOADING_FADE_S + 0.25;
+
 const RESUME_SETTLE_MS: Millis = 1_500;
 
 const POWER_MENU_PITCH: f32 = 44.0;
@@ -246,6 +250,10 @@ pub enum Phase {
         resumed: bool,
         clean: bool,
     },
+    Handing {
+        cart: String,
+        t: f32,
+    },
     Playing {
         cart: String,
     },
@@ -298,6 +306,8 @@ pub struct App {
     starting: Option<LinkStarting>,
     ra_link: Option<(RaLinkUp, RaRequest)>,
     ra_radio: RaRadio,
+    handing: Option<RaRequest>,
+    handed_over: bool,
     link_transport: Option<(u16, Box<dyn LinkChannel>)>,
     restarting: bool,
     exiting: bool,
@@ -430,6 +440,8 @@ impl App {
             starting: None,
             ra_link: None,
             ra_radio: ra_radio(),
+            handing: None,
+            handed_over: false,
             link_transport: None,
             restarting: false,
             exiting: false,
@@ -1797,6 +1809,13 @@ impl App {
                 }
                 (*t >= EJECT_S).then_some(Phase::Shelf)
             }
+            Phase::Handing { t, .. } => {
+                let was = *t;
+                *t += dt;
+                let at = SEATED_AT - Sfx::Insert.lead();
+                touched = was < at && *t >= at;
+                None
+            }
             _ => None,
         };
         if touched {
@@ -1817,6 +1836,9 @@ impl App {
             }
             self.record_cart(seated);
         }
+        if matches!(self.phase, Phase::Handing { t, .. } if t >= HANDING_S) && !self.exiting {
+            self.finish_handing();
+        }
         self.step_screen(dt);
     }
 
@@ -1831,12 +1853,16 @@ impl App {
         let docked = self.power_menu.is_none()
             && matches!(
                 self.phase,
-                Phase::Shelf | Phase::Inserting { .. } | Phase::Ejecting { .. }
+                Phase::Shelf
+                    | Phase::Inserting { .. }
+                    | Phase::Handing { .. }
+                    | Phase::Ejecting { .. }
             );
         let sliding = self.power_menu.is_none()
             && matches!(
                 self.phase,
                 Phase::Inserting { .. }
+                    | Phase::Handing { .. }
                     | Phase::Playing { .. }
                     | Phase::Polaroids { .. }
                     | Phase::Ejecting { .. }
@@ -2083,6 +2109,7 @@ impl App {
                     (t / SEATED_AT).clamp(0.0, 1.0)
                 }
             }
+            Phase::Handing { t, .. } => (t / SEATED_AT).clamp(0.0, 1.0),
             Phase::Ejecting { t, .. } => 1.0 - (t / EJECT_S).clamp(0.0, 1.0),
             _ => 1.0,
         }
@@ -2091,6 +2118,10 @@ impl App {
     pub fn draw(&self, out: &mut Vec<Draw>) {
         if let Some(index) = self.power_menu {
             self.draw_power_menu(index, out);
+            return;
+        }
+        if self.handed_over {
+            crate::loading::draw(crate::loading::lit_at(self.now()), 1.0, out);
             return;
         }
         if self.shutting_down() {
@@ -2179,6 +2210,16 @@ impl App {
                         .draw_row(Some(cart), 0.0, self.seat(), 1.0, out);
                 }
                 self.chrome(cart, self.seat(), out);
+            }
+            Phase::Handing { cart, t } => {
+                draw_backdrop(self.wallpaper, out);
+                self.shelf()
+                    .draw_row(Some(cart), 0.0, self.seat(), 1.0, out);
+                self.chrome(cart, self.seat(), out);
+                let fade = ((t - SEATED_AT) / LOADING_FADE_S).clamp(0.0, 1.0);
+                if fade > 0.0 {
+                    crate::loading::draw(crate::loading::lit_at(self.now()), fade, out);
+                }
             }
             Phase::Ejecting { cart, .. } => {
                 draw_backdrop(self.wallpaper, out);
@@ -2596,7 +2637,7 @@ impl App {
         if self.state.use_retroarch {
             self.play_held = None;
             if let Some(request) = self.front_request(None) {
-                self.hand_off(request);
+                self.begin_handing(request);
             }
             return;
         }
@@ -3062,7 +3103,7 @@ impl App {
         let fail = match result {
             Ok(()) => {
                 self.game_menu = None;
-                if !self.hand_off(request) {
+                if !self.begin_handing(request) {
                     self.radio.ask(RadioJob::Down);
                 }
                 return;
@@ -3294,10 +3335,43 @@ impl App {
         }
     }
 
+    fn begin_handing(&mut self, request: RaRequest) -> bool {
+        let Some(cart) = self.selected_stem().map(str::to_string) else {
+            return false;
+        };
+        self.shelf_mut().release_hold();
+        self.play_held = None;
+        self.refusal = None;
+        self.refused_from = None;
+        self.handing = Some(request);
+        self.phase = Phase::Handing { cart, t: 0.0 };
+        true
+    }
+
+    fn finish_handing(&mut self) {
+        let Some(request) = self.handing.take() else {
+            self.phase = Phase::Shelf;
+            return;
+        };
+        let linked = matches!(request, RaRequest::Game { link: Some(_), .. });
+        if !self.hand_off(request) {
+            if linked {
+                self.radio.ask(RadioJob::Down);
+            }
+            self.phase = Phase::Shelf;
+        }
+    }
+
     fn hand_off(&mut self, request: RaRequest) -> bool {
         let Some(root) = self.root.clone() else {
             return false;
         };
+        if matches!(request, RaRequest::Game { .. }) {
+            let dir = root.join(crate::loading::LOADING_DIR);
+            if let Err(e) = crate::loading::write_frames(&dir) {
+                eprintln!("slot: retroarch: loading frames: {e}");
+            }
+        }
         if let Err(e) = request.write(&root) {
             eprintln!("slot: retroarch: could not write the request: {e}");
             self.card_failing.store(true, Ordering::Relaxed);
@@ -3306,6 +3380,7 @@ impl App {
         }
         eprintln!("slot: retroarch: handing over to RetroArch");
         self.remember_front();
+        self.handed_over = true;
         self.begin_exit();
         true
     }

@@ -132,4 +132,19 @@ expect \
 	"killall keymon" \
 	"slot 3"
 
+setup
+mkdir -p "$TMP/sd/trimui/res/skin"
+: > "$TMP/sd/trimui/.slot"
+printf -- '-\n' > "$TMP/plan"
+slot_from_plan
+run
+[ ! -e "$TMP/sd/trimui" ] || { echo "slot's loading from a session cut short was left for StockMix's games" >&2; exit 1; }
+
+setup
+mkdir -p "$TMP/sd/trimui/res/skin"
+printf -- '-\n' > "$TMP/plan"
+slot_from_plan
+run
+[ -d "$TMP/sd/trimui/res/skin" ] || { echo "a trimui folder that was not slot's was removed" >&2; exit 1; }
+
 echo "launch-retroarch: all passed"

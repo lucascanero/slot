@@ -5,6 +5,8 @@ RA_DIR="${SLOT_RA_DIR:-$SD/RetroArch}"
 SCRIPTS="${SLOT_RA_SCRIPTS:-$SD/System/usr/trimui/scripts}"
 HOTKEY="${SLOT_RA_HOTKEY:-/var/trimui_inputd/ra_hotkey}"
 LINK_HOST="${SLOT_LINK_HOST:-10.42.0.1}"
+LOADING="$SD/Slot/Config/loading"
+SKIN="$SD/trimui"
 
 value() {
 	sed -n "s/^$1=//p" "$REQUEST" 2> /dev/null | head -n 1
@@ -79,6 +81,13 @@ if [ "$mode" = game ] && [ -n "$link" ] && grep -q '^option=' "$REQUEST"; then
 	mv -f "$opt.new" "$opt"
 fi
 
+[ -f "$SKIN/.slot" ] && rm -rf "$SKIN"
+skin_made=""
+if [ "$mode" = game ] && [ ! -e "$SKIN" ] && [ -f "$LOADING/app_loading_bg.png" ]; then
+	mkdir -p "$SKIN/res/skin" && : > "$SKIN/.slot" && skin_made=1
+	cp -f "$LOADING"/app_loading_*.png "$SKIN/res/skin/" 2> /dev/null
+fi
+
 hotkey_made=""
 if [ ! -e "$HOTKEY" ] && touch "$HOTKEY" 2> /dev/null; then
 	hotkey_made=1
@@ -111,4 +120,5 @@ if [ -n "$opt" ]; then
 	rm -f "$opt.none"
 fi
 [ -n "$hotkey_made" ] && rm -f "$HOTKEY"
+[ -n "$skin_made" ] && rm -rf "$SKIN"
 exit "$rc"

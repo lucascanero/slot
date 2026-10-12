@@ -16,7 +16,7 @@ use slot_input::{Action, Btn};
 use slot_store::{
     read_slot_state, write_selected_core, write_slot_state, Core, Layout, Platform, SlotState,
 };
-use slot_ui::{edge, Draw, QuickRow, QuickValue, Toast};
+use slot_ui::{edge, opening, Draw, QuickRow, QuickValue, Toast, OUT_H, OUT_W};
 use tempfile::TempDir;
 
 fn booted_with(d: &Path, state: SlotState) -> (App, Clock) {
@@ -193,12 +193,18 @@ fn a_cart_put_in_in_retroarch_mode_goes_to_retroarch_and_slot_leaves() {
     let (d, mut a, _) = on_carousel(true);
     install_retroarch(d.path());
     a.apply(Action::Insert);
-    assert!(a.exiting(), "slot did not leave for RetroArch");
     assert!(
-        matches!(a.phase(), Phase::Shelf),
-        "slot started the game itself: {:?}",
+        matches!(a.phase(), Phase::Handing { .. }),
+        "the cart did not start sliding in: {:?}",
         a.phase()
     );
+    assert!(!a.exiting(), "slot left before the cart went in");
+    assert_eq!(
+        RaRequest::read(d.path()),
+        None,
+        "handed over before the cart went in"
+    );
+    hand_over(&mut a);
     let (core, name, rom) = game(d.path());
     assert_eq!(
         core,
@@ -215,6 +221,7 @@ fn retroarch_loads_the_core_chosen_on_the_cart() {
     install_retroarch(d.path());
     write_selected_core(d.path(), "Emerald", Core::Gpsp).unwrap();
     a.apply(Action::Insert);
+    hand_over(&mut a);
     let (core, name, _) = game(d.path());
     assert_eq!(
         core,
@@ -236,6 +243,7 @@ fn a_game_boy_cart_goes_to_mgba_whatever_was_written_for_it() {
         },
     );
     a.apply(Action::Insert);
+    hand_over(&mut a);
     assert_eq!(game(d.path()).1, "mGBA");
 }
 
@@ -305,7 +313,7 @@ fn turning_retroarch_off_after_a_hand_off_does_not_put_the_cart_in_next_boot() {
     let (d, mut a, _) = on_carousel(true);
     install_retroarch(d.path());
     a.apply(Action::Insert);
-    assert!(a.exiting());
+    hand_over(&mut a);
     std::fs::remove_file(slot::retroarch::request_path(d.path())).unwrap();
     let (mut back, _) = app_booting_at(d.path(), CLOCK_IS_SET);
     walk_to(&mut back, QuickRow::RetroArch);
@@ -338,6 +346,78 @@ fn settle(a: &mut App) {
         a.update(1.0 / 60.0);
         std::thread::sleep(Duration::from_millis(1));
         assert!(Instant::now() < deadline, "the overlay never left Working");
+    }
+    if matches!(a.phase(), Phase::Handing { .. }) {
+        hand_over(a);
+    }
+}
+
+fn hand_over(a: &mut App) {
+    for _ in 0..240 {
+        if a.exiting() {
+            return;
+        }
+        assert!(
+            !matches!(a.phase(), Phase::Inserting { .. } | Phase::Playing { .. }),
+            "slot started its own core for a cart RetroArch should run: {:?}",
+            a.phase()
+        );
+        a.update(1.0 / 60.0);
+    }
+    panic!("slot never handed the cart over: {:?}", a.phase());
+}
+
+fn covered(a: &App) -> bool {
+    let mut out = Vec::new();
+    a.draw(&mut out);
+    let g = opening();
+    out.iter().any(|d| {
+        matches!(*d, Draw::Rect { x, y, w, h, colour }
+            if [x, y, w, h] == [0.0, 0.0, OUT_W as f32, OUT_H as f32]
+                && colour == [g[0], g[1], g[2], 1.0])
+    })
+}
+
+fn exit_screen(a: &App) -> bool {
+    let mut out = Vec::new();
+    a.draw(&mut out);
+    out.iter().any(|d| {
+        matches!(*d, Draw::Rect { x, y, w, h, colour }
+            if [x, y, w, h] == [0.0, 0.0, OUT_W as f32, OUT_H as f32]
+                && colour == [0.0, 0.0, 0.0, 1.0])
+    })
+}
+
+#[test]
+fn the_cart_slides_in_then_slots_loading_screen_covers_it_until_slot_leaves() {
+    let (d, mut a, _) = on_carousel(true);
+    install_retroarch(d.path());
+    a.apply(Action::Insert);
+    assert!(
+        !covered(&a),
+        "the loading screen hid the cart before it went in"
+    );
+    hand_over(&mut a);
+    assert!(covered(&a), "slot left without its loading screen up");
+    assert!(
+        !exit_screen(&a),
+        "the black exit screen flashed between the cart and RetroArch"
+    );
+}
+
+#[test]
+fn retroarch_gets_slots_loading_frames_when_a_cart_is_handed_over() {
+    let (d, mut a, _) = on_carousel(true);
+    install_retroarch(d.path());
+    a.apply(Action::Insert);
+    hand_over(&mut a);
+    let dir = d.path().join(slot::loading::LOADING_DIR);
+    assert!(dir.join(slot::loading::BG_FILE).is_file());
+    for i in 1..=slot::loading::FRAMES {
+        assert!(
+            dir.join(format!("app_loading_{i:02}.png")).is_file(),
+            "frame {i} missing"
+        );
     }
 }
 

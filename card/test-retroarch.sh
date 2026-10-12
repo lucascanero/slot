@@ -25,6 +25,7 @@ setup() {
 			echo "home=\$HOME pwd=\$(pwd)"
 			echo "lib=\$LD_LIBRARY_PATH"
 			[ -f "$TMP/ra_hotkey" ] && echo "hotkey=yes" || echo "hotkey=no"
+			[ -f "$TMP/sd/trimui/res/skin/app_loading_bg.png" ] && echo "skin=\$(cat "$TMP/sd/trimui/res/skin/app_loading_bg.png")" || echo "skin=none"
 			cat "$CFG/mGBA/$GAME.opt" 2>/dev/null | sed 's/^/opt: /'
 		} >> "$TMP/ra.log"
 		exit \${RA_EXIT:-0}
@@ -129,5 +130,52 @@ request mode=menu
 if run 2> /dev/null; then
 	fail "a card with no RetroArch reported success"
 fi
+
+LOADING="$TMP/sd/Slot/Config/loading"
+SKIN="$TMP/sd/trimui"
+
+frames() {
+	mkdir -p "$LOADING"
+	echo slot > "$LOADING/app_loading_bg.png"
+	for i in 01 02 03; do echo "slot $i" > "$LOADING/app_loading_$i.png"; done
+}
+
+setup
+frames
+request mode=game "core=$CORE" core_name=mGBA "rom=$ROM" link=
+run
+grep -qx "skin=slot" "$TMP/ra.log" || fail "RetroArch loaded the game with TrimUI's loading, not slot's"
+[ ! -e "$SKIN" ] || fail "slot's loading was left in place for StockMix's own games"
+
+setup
+frames
+mkdir -p "$SKIN/res/skin"
+echo mine > "$SKIN/res/skin/app_loading_bg.png"
+request mode=game "core=$CORE" core_name=mGBA "rom=$ROM" link=
+run
+grep -qx "skin=mine" "$TMP/ra.log" || fail "a skin the user put there was replaced"
+[ "$(cat "$SKIN/res/skin/app_loading_bg.png")" = mine ] || fail "a skin the user put there was changed"
+
+setup
+frames
+mkdir -p "$SKIN/res/skin"
+: > "$SKIN/.slot"
+echo stale > "$SKIN/res/skin/app_loading_bg.png"
+request mode=game "core=$CORE" core_name=mGBA "rom=$ROM" link=
+run
+grep -qx "skin=slot" "$TMP/ra.log" || fail "a loading left by a session cut short was not refreshed"
+[ ! -e "$SKIN" ] || fail "a loading left by a session cut short is still there"
+
+setup
+frames
+request mode=menu
+run
+grep -qx "skin=none" "$TMP/ra.log" || fail "the menu got a game's loading"
+
+setup
+request mode=game "core=$CORE" core_name=mGBA "rom=$ROM" link=
+run
+grep -qx "skin=none" "$TMP/ra.log" || fail "a loading appeared with no frames from slot"
+[ ! -e "$SKIN" ] || fail "an empty skin folder was left behind"
 
 echo "retroarch: all passed"
