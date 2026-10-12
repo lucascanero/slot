@@ -1,0 +1,31 @@
+--- a/cpu_threaded.c
++++ b/cpu_threaded.c
+@@ -243,7 +243,27 @@
+   void platform_cache_sync(void *baseaddr, void *endptr) {
+     ctr_flush_invalidate_cache();
+   }
+-#elif defined(ARM_ARCH) || defined(ARM64_ARCH)
++#elif defined(ARM64_ARCH)
++  /* Clean the D-cache to the point of unification, wait, invalidate the
++   * I-cache, wait again, then synchronise the pipeline. zig's compiler-rt
++   * __clear_cache leaves out the dsb ish after the ic ivau loop, so a
++   * Cortex-A53 can still fetch stale bytes for a block the dynarec has just
++   * written and die with SIGILL; spell the whole sequence out here. */
++  void platform_cache_sync(void *baseaddr, void *endptr) {
++    unsigned long ctr, line, addr;
++    unsigned long start = (unsigned long)baseaddr, end = (unsigned long)endptr;
++    __asm__ volatile("mrs %0, ctr_el0" : "=r"(ctr));
++    line = 4ul << ((ctr >> 16) & 0xf);
++    for (addr = start & ~(line - 1); addr < end; addr += line)
++      __asm__ volatile("dc cvau, %0" : : "r"(addr) : "memory");
++    __asm__ volatile("dsb ish" : : : "memory");
++    line = 4ul << (ctr & 0xf);
++    for (addr = start & ~(line - 1); addr < end; addr += line)
++      __asm__ volatile("ic ivau, %0" : : "r"(addr) : "memory");
++    __asm__ volatile("dsb ish" : : : "memory");
++    __asm__ volatile("isb" : : : "memory");
++  }
++#elif defined(ARM_ARCH)
+   void platform_cache_sync(void *baseaddr, void *endptr) {
+     __clear_cache(baseaddr, endptr);
+   }

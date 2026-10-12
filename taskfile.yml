@@ -229,6 +229,7 @@ tasks:
       - '{{.CROSS}} sh cores/gpsp/build.sh build {{.GPSP_COMMIT}} vendor/gpsp-src.tar.gz target-device/gpsp vendor/brick/gpsp_libretro.so'
       - file vendor/brick/gpsp_libretro.so | grep -q aarch64
       - sh tools/glibc-floor.sh vendor/brick/gpsp_libretro.so {{.BRICK_GLIBC}}
+      - python3 -I cores/gpsp/test/cache_sync.py vendor/brick/gpsp_libretro.so
       - echo "{{.GPSP_COMMIT}}" > vendor/gpsp-src.sha
       - cp vendor/brick/gpsp_libretro.so.meta vendor/gpsp-src.meta
 
