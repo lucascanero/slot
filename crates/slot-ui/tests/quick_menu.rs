@@ -85,6 +85,7 @@ fn the_rows_run_in_the_order_the_user_chose() {
             "Date & Time",
             "About",
             "Download Labels",
+            "Use RetroArch",
             "Exit to Menu"
         ]
     );
@@ -118,7 +119,8 @@ fn the_rows_run_in_the_order_the_user_chose() {
             QuickRow::About,
             QuickRow::Game,
             QuickRow::Exit,
-            QuickRow::Labels
+            QuickRow::Labels,
+            QuickRow::RetroArchSettings
         ]
     );
     for page in [
@@ -206,4 +208,64 @@ fn the_two_carets_point_different_ways() {
         slot_ui::quick_caret_face(true).rgba,
         "a caret glyph is missing from the symbols font"
     );
+}
+
+#[test]
+fn the_retroarch_page_runs_in_its_own_order() {
+    assert_eq!(
+        QuickRow::RETROARCH.map(QuickRow::label),
+        [
+            "Use RetroArch",
+            "RetroArch Settings",
+            "Start on Boot",
+            "Date & Time",
+            "About",
+            "Download Labels",
+            "Exit to Menu"
+        ]
+    );
+    for row in QuickRow::RETROARCH {
+        assert_eq!(row.page_in(true), &QuickRow::RETROARCH[..], "{row:?}");
+        assert_eq!(row.parent_in(true), None, "{row:?} has a parent page");
+    }
+    assert_eq!(QuickRow::top(true), QuickRow::RetroArch);
+    assert_eq!(QuickRow::top(false), QuickRow::Screen);
+}
+
+#[test]
+fn start_on_boot_is_on_gameplay_in_slot_mode_and_on_the_main_page_in_retroarch_mode() {
+    assert_eq!(QuickRow::StartOnBoot.page_in(false), &QuickRow::GAME[..]);
+    assert_eq!(QuickRow::StartOnBoot.parent_in(false), Some(QuickRow::Game));
+    assert_eq!(
+        QuickRow::StartOnBoot.page_in(true),
+        &QuickRow::RETROARCH[..]
+    );
+    assert_eq!(QuickRow::StartOnBoot.position_in(true), 2);
+}
+
+#[test]
+fn up_and_down_wrap_inside_the_page_of_the_mode() {
+    assert_eq!(QuickRow::Exit.down_in(true), QuickRow::RetroArch);
+    assert_eq!(QuickRow::RetroArch.up_in(true), QuickRow::Exit);
+    assert_eq!(
+        QuickRow::RetroArch.down_in(true),
+        QuickRow::RetroArchSettings
+    );
+    assert_eq!(QuickRow::RetroArch.down_in(false), QuickRow::Exit);
+    assert_eq!(QuickRow::Labels.down_in(false), QuickRow::RetroArch);
+    assert_eq!(QuickRow::Exit.down_in(false), QuickRow::Screen);
+}
+
+#[test]
+fn both_main_pages_stand_the_same_height_and_every_row_knows_its_index() {
+    assert_eq!(QuickRow::MAIN.len(), QuickRow::RETROARCH.len());
+    for (i, row) in QuickRow::ALL.iter().enumerate() {
+        assert_eq!(row.index(), i, "{row:?}");
+    }
+    assert_eq!(QuickRow::RetroArch.label(), "Use RetroArch");
+    assert!(
+        !QuickRow::RetroArch.opens(),
+        "Use RetroArch is an On/Off row"
+    );
+    assert!(QuickRow::RetroArchSettings.opens());
 }

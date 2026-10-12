@@ -675,12 +675,14 @@ impl App {
             QuickRow::Turbo => Some(QuickValue::flag(self.state.turbo)),
             QuickRow::Rewind => Some(QuickValue::flag(self.state.rewind)),
             QuickRow::StartOnBoot => Some(QuickValue::flag(self.start_on_boot)),
+            QuickRow::RetroArch => Some(QuickValue::flag(self.state.use_retroarch)),
             QuickRow::DateTime
             | QuickRow::About
             | QuickRow::Screen
             | QuickRow::Game
             | QuickRow::Exit
-            | QuickRow::Labels => None,
+            | QuickRow::Labels
+            | QuickRow::RetroArchSettings => None,
         }
     }
 
@@ -1428,7 +1430,9 @@ impl App {
             | QuickRow::GbShader
             | QuickRow::GbPalettes
             | QuickRow::StartOnBoot
-            | QuickRow::Rumble => {}
+            | QuickRow::Rumble
+            | QuickRow::RetroArch
+            | QuickRow::RetroArchSettings => {}
         }
     }
 
@@ -1475,7 +1479,9 @@ impl App {
             | QuickRow::Game
             | QuickRow::StartOnBoot
             | QuickRow::Exit
-            | QuickRow::Labels => return,
+            | QuickRow::Labels
+            | QuickRow::RetroArch
+            | QuickRow::RetroArchSettings => return,
         }
         self.persist();
     }
@@ -2092,6 +2098,7 @@ impl App {
             }
             Phase::QuickMenu { row } => QuickMenu {
                 row: *row,
+                retroarch: self.state.use_retroarch,
                 values: QuickRow::ALL.map(|r| self.quick_value(r)),
                 clock: self.quick_clock_faces,
                 faces: self.quick_menu_faces.as_ref(),

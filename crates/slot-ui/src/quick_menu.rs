@@ -23,10 +23,12 @@ pub enum QuickRow {
     StartOnBoot,
     Exit,
     Labels,
+    RetroArch,
+    RetroArchSettings,
 }
 
 impl QuickRow {
-    pub const ALL: [QuickRow; 17] = [
+    pub const ALL: [QuickRow; 19] = [
         QuickRow::FastForward,
         QuickRow::FastForwardSound,
         QuickRow::Screen,
@@ -44,11 +46,24 @@ impl QuickRow {
         QuickRow::StartOnBoot,
         QuickRow::Exit,
         QuickRow::Labels,
+        QuickRow::RetroArch,
+        QuickRow::RetroArchSettings,
     ];
 
-    pub const MAIN: [QuickRow; 6] = [
+    pub const MAIN: [QuickRow; 7] = [
         QuickRow::Screen,
         QuickRow::Game,
+        QuickRow::DateTime,
+        QuickRow::About,
+        QuickRow::Labels,
+        QuickRow::RetroArch,
+        QuickRow::Exit,
+    ];
+
+    pub const RETROARCH: [QuickRow; 7] = [
+        QuickRow::RetroArch,
+        QuickRow::RetroArchSettings,
+        QuickRow::StartOnBoot,
         QuickRow::DateTime,
         QuickRow::About,
         QuickRow::Labels,
@@ -93,8 +108,28 @@ impl QuickRow {
         }
     }
 
+    pub fn page_in(self, retroarch: bool) -> &'static [QuickRow] {
+        if retroarch && QuickRow::RETROARCH.contains(&self) {
+            &QuickRow::RETROARCH
+        } else {
+            self.page()
+        }
+    }
+
+    pub fn top(retroarch: bool) -> QuickRow {
+        if retroarch {
+            QuickRow::RETROARCH[0]
+        } else {
+            QuickRow::MAIN[0]
+        }
+    }
+
     pub fn parent(self) -> Option<QuickRow> {
-        match self.page()[0] {
+        self.parent_in(false)
+    }
+
+    pub fn parent_in(self, retroarch: bool) -> Option<QuickRow> {
+        match self.page_in(retroarch)[0] {
             QuickRow::GbaShader => Some(QuickRow::Screen),
             QuickRow::FastForward => Some(QuickRow::Game),
             _ => None,
@@ -110,7 +145,14 @@ impl QuickRow {
     }
 
     pub fn position(self) -> usize {
-        self.page().iter().position(|r| *r == self).unwrap_or(0)
+        self.position_in(false)
+    }
+
+    pub fn position_in(self, retroarch: bool) -> usize {
+        self.page_in(retroarch)
+            .iter()
+            .position(|r| *r == self)
+            .unwrap_or(0)
     }
 
     pub fn label(self) -> &'static str {
@@ -132,6 +174,8 @@ impl QuickRow {
             QuickRow::StartOnBoot => "Start on Boot",
             QuickRow::Exit => "Exit to Menu",
             QuickRow::Labels => "Download Labels",
+            QuickRow::RetroArch => "Use RetroArch",
+            QuickRow::RetroArchSettings => "RetroArch Settings",
         }
     }
 
@@ -144,17 +188,26 @@ impl QuickRow {
                 | QuickRow::Game
                 | QuickRow::Exit
                 | QuickRow::Labels
+                | QuickRow::RetroArchSettings
         )
     }
 
     pub fn up(self) -> QuickRow {
-        let page = self.page();
-        page[(self.position() + page.len() - 1) % page.len()]
+        self.up_in(false)
+    }
+
+    pub fn up_in(self, retroarch: bool) -> QuickRow {
+        let page = self.page_in(retroarch);
+        page[(self.position_in(retroarch) + page.len() - 1) % page.len()]
     }
 
     pub fn down(self) -> QuickRow {
-        let page = self.page();
-        page[(self.position() + 1) % page.len()]
+        self.down_in(false)
+    }
+
+    pub fn down_in(self, retroarch: bool) -> QuickRow {
+        let page = self.page_in(retroarch);
+        page[(self.position_in(retroarch) + 1) % page.len()]
     }
 }
 
@@ -314,6 +367,7 @@ pub struct QuickMenuFaces {
 
 pub struct QuickMenu<'a> {
     pub row: QuickRow,
+    pub retroarch: bool,
     pub values: [Option<QuickValue>; QuickRow::ALL.len()],
     pub clock: Option<[(TexId, u32, u32); 2]>,
     pub faces: Option<&'a QuickMenuFaces>,
@@ -330,7 +384,7 @@ impl QuickMenu<'_> {
         });
         out.push(Draw::Rect {
             x: 0.0,
-            y: row_top(self.row) + BAR_INSET,
+            y: row_top(self.row, self.retroarch) + BAR_INSET,
             w: OUT_W as f32,
             h: QUICK_PITCH - 2.0 * BAR_INSET,
             colour: edge(),
@@ -339,8 +393,8 @@ impl QuickMenu<'_> {
             return;
         };
         let (right, pad) = (OUT_W as f32 - QUICK_EDGE, MENU_PAD as f32);
-        for &row in self.row.page() {
-            let y = row_top(row) + TYPE_DROP;
+        for &row in self.row.page_in(self.retroarch) {
+            let y = row_top(row, self.retroarch) + TYPE_DROP;
             let lit = row == self.row;
             if let Some(&(tex, w, h)) = faces.labels.get(row.index()) {
                 push(out, tex, QUICK_EDGE - pad, y, w, h);
@@ -373,9 +427,10 @@ impl QuickMenu<'_> {
     }
 }
 
-fn row_top(row: QuickRow) -> f32 {
-    let top = (OUT_H as f32 - QUICK_PITCH * row.page().len() as f32) / 2.0;
-    top + QUICK_PITCH * row.position() as f32
+fn row_top(row: QuickRow, retroarch: bool) -> f32 {
+    let page = row.page_in(retroarch);
+    let top = (OUT_H as f32 - QUICK_PITCH * page.len() as f32) / 2.0;
+    top + QUICK_PITCH * row.position_in(retroarch) as f32
 }
 
 fn push(out: &mut Vec<Draw>, tex: TexId, x: f32, y: f32, w: u32, h: u32) {
