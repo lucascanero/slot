@@ -506,6 +506,9 @@ impl App {
     }
 
     fn start(&mut self) {
+        if self.state.use_retroarch {
+            return self.start_on_the_shelf();
+        }
         let seated = if self.single_cart() {
             Some((self.shelf_at, 0))
         } else {
@@ -530,6 +533,21 @@ impl App {
                 self.name_pending = true;
             }
         }
+    }
+
+    fn start_on_the_shelf(&mut self) {
+        self.phase = Phase::Shelf;
+        let platform = self.state.cart_platform;
+        let front = self
+            .state
+            .cart
+            .clone()
+            .and_then(|stem| self.seat_of(&stem, platform));
+        if let Some((at, i)) = front {
+            self.shelf_at = at;
+            self.shelf_mut().select(i);
+        }
+        self.name_pending = true;
     }
 
     fn shelf(&self) -> &Shelf {
@@ -1384,19 +1402,20 @@ impl App {
 
     fn open_quick_menu(&mut self) {
         self.phase = Phase::QuickMenu {
-            row: QuickRow::MAIN[0],
+            row: QuickRow::top(self.state.use_retroarch),
         };
     }
 
     fn quick_menu_input(&mut self, row: QuickRow, action: Action) {
+        let retroarch = self.state.use_retroarch;
         let row = match action {
-            Action::GbaDown(Btn::Up) => row.up(),
-            Action::GbaDown(Btn::Down) => row.down(),
+            Action::GbaDown(Btn::Up) => row.up_in(retroarch),
+            Action::GbaDown(Btn::Down) => row.down_in(retroarch),
             Action::GbaDown(Btn::Left) => return self.change_setting(row, false),
             Action::GbaDown(Btn::Right) => return self.change_setting(row, true),
             Action::GbaDown(Btn::A) => return self.open_quick_row(row),
             Action::GbaDown(Btn::B) | Action::QuickMenu => {
-                self.phase = match row.parent() {
+                self.phase = match row.parent_in(retroarch) {
                     Some(row) => Phase::QuickMenu { row },
                     None => Phase::Shelf,
                 };
@@ -1439,6 +1458,9 @@ impl App {
     fn change_setting(&mut self, row: QuickRow, right: bool) {
         if row == QuickRow::StartOnBoot {
             return self.toggle_start_on_boot();
+        }
+        if row == QuickRow::RetroArch {
+            return self.toggle_retroarch();
         }
         let s = &mut self.state;
         match row {
@@ -1495,6 +1517,15 @@ impl App {
             eprintln!("slot: start on boot: {e}");
         }
         self.start_on_boot = hook.installed();
+    }
+
+    fn toggle_retroarch(&mut self) {
+        self.state.use_retroarch = !self.state.use_retroarch;
+        if !self.state.use_retroarch {
+            self.state.cart = None;
+            self.state.cart_platform = None;
+        }
+        self.persist();
     }
 
     pub fn apply_at(&mut self, action: Action, now: Millis) {
