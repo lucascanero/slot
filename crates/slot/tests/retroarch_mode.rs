@@ -16,7 +16,7 @@ use slot_input::{Action, Btn};
 use slot_store::{
     read_slot_state, write_selected_core, write_slot_state, Core, Layout, Platform, SlotState,
 };
-use slot_ui::{QuickRow, QuickValue, Toast};
+use slot_ui::{edge, Draw, QuickRow, QuickValue, Toast};
 use tempfile::TempDir;
 
 fn booted_with(d: &Path, state: SlotState) -> (App, Clock) {
@@ -53,6 +53,17 @@ fn press(a: &mut App, btn: Btn) {
     a.apply(Action::GbaUp(btn));
 }
 
+fn bar(a: &App) -> Vec<[f32; 4]> {
+    let mut out = Vec::new();
+    a.draw(&mut out);
+    out.into_iter()
+        .filter_map(|d| match d {
+            Draw::Rect { x, y, w, h, colour } if colour == edge() => Some([x, y, w, h]),
+            _ => None,
+        })
+        .collect()
+}
+
 fn walk_to(a: &mut App, row: QuickRow) {
     if a.quick_menu().is_none() {
         a.apply(Action::QuickMenu);
@@ -79,7 +90,9 @@ fn use_retroarch_stands_above_exit_and_starts_off() {
 fn turning_it_on_saves_and_swaps_screen_and_gameplay_for_retroarch_settings() {
     let (d, mut a, _) = on_carousel(false);
     walk_to(&mut a, QuickRow::RetroArch);
+    let before = bar(&a);
     press(&mut a, Btn::Right);
+    assert_eq!(bar(&a), before, "the row jumped away from under the bar");
     assert!(
         read_slot_state(d.path()).use_retroarch,
         "never reached the card"
@@ -95,14 +108,26 @@ fn turning_it_on_saves_and_swaps_screen_and_gameplay_for_retroarch_settings() {
         seen.push(a.quick_menu().unwrap());
         press(&mut a, Btn::Down);
     }
-    assert_eq!(seen, QuickRow::RETROARCH.to_vec());
+    for row in QuickRow::RETROARCH {
+        assert!(seen.contains(&row), "{row:?} is not on the page: {seen:?}");
+    }
 }
 
 #[test]
-fn the_menu_opens_on_use_retroarch_in_retroarch_mode() {
+fn turning_it_off_leaves_the_bar_where_it_was() {
+    let (_d, mut a, _) = on_carousel(true);
+    walk_to(&mut a, QuickRow::RetroArch);
+    let before = bar(&a);
+    press(&mut a, Btn::Left);
+    assert_eq!(a.quick_menu(), Some(QuickRow::RetroArch));
+    assert_eq!(bar(&a), before, "the row jumped away from under the bar");
+}
+
+#[test]
+fn the_menu_opens_on_retroarch_settings_in_retroarch_mode() {
     let (_d, mut a, _) = on_carousel(true);
     a.apply(Action::QuickMenu);
-    assert_eq!(a.quick_menu(), Some(QuickRow::RetroArch));
+    assert_eq!(a.quick_menu(), Some(QuickRow::RetroArchSettings));
 }
 
 #[test]

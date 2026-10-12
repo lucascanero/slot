@@ -215,12 +215,12 @@ fn the_retroarch_page_runs_in_its_own_order() {
     assert_eq!(
         QuickRow::RETROARCH.map(QuickRow::label),
         [
-            "Use RetroArch",
             "RetroArch Settings",
             "Start on Boot",
             "Date & Time",
             "About",
             "Download Labels",
+            "Use RetroArch",
             "Exit to Menu"
         ]
     );
@@ -228,8 +228,17 @@ fn the_retroarch_page_runs_in_its_own_order() {
         assert_eq!(row.page_in(true), &QuickRow::RETROARCH[..], "{row:?}");
         assert_eq!(row.parent_in(true), None, "{row:?} has a parent page");
     }
-    assert_eq!(QuickRow::top(true), QuickRow::RetroArch);
+    assert_eq!(QuickRow::top(true), QuickRow::RetroArchSettings);
     assert_eq!(QuickRow::top(false), QuickRow::Screen);
+}
+
+#[test]
+fn use_retroarch_stands_on_the_same_row_in_both_modes() {
+    assert_eq!(
+        QuickRow::RetroArch.position_in(true),
+        QuickRow::RetroArch.position_in(false),
+        "turning RetroArch on or off moves the row under the bar"
+    );
 }
 
 #[test]
@@ -240,17 +249,15 @@ fn start_on_boot_is_on_gameplay_in_slot_mode_and_on_the_main_page_in_retroarch_m
         QuickRow::StartOnBoot.page_in(true),
         &QuickRow::RETROARCH[..]
     );
-    assert_eq!(QuickRow::StartOnBoot.position_in(true), 2);
+    assert_eq!(QuickRow::StartOnBoot.position_in(true), 1);
 }
 
 #[test]
 fn up_and_down_wrap_inside_the_page_of_the_mode() {
-    assert_eq!(QuickRow::Exit.down_in(true), QuickRow::RetroArch);
-    assert_eq!(QuickRow::RetroArch.up_in(true), QuickRow::Exit);
-    assert_eq!(
-        QuickRow::RetroArch.down_in(true),
-        QuickRow::RetroArchSettings
-    );
+    assert_eq!(QuickRow::Exit.down_in(true), QuickRow::RetroArchSettings);
+    assert_eq!(QuickRow::RetroArchSettings.up_in(true), QuickRow::Exit);
+    assert_eq!(QuickRow::RetroArch.down_in(true), QuickRow::Exit);
+    assert_eq!(QuickRow::RetroArch.up_in(true), QuickRow::Labels);
     assert_eq!(QuickRow::RetroArch.down_in(false), QuickRow::Exit);
     assert_eq!(QuickRow::Labels.down_in(false), QuickRow::RetroArch);
     assert_eq!(QuickRow::Exit.down_in(false), QuickRow::Screen);

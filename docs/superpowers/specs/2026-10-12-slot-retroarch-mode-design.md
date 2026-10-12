@@ -110,12 +110,12 @@ HOME="$RA_DIR" ./ra64.trimui -v -L "$core" [--host | --connect 10.42.0.1] "$rom"
 | Modo | Página principal |
 |---|---|
 | Slot | Screen · Gameplay · Date & Time · About · Download Labels · **Use RetroArch** · Exit to Menu |
-| RetroArch | **Use RetroArch** · **RetroArch Settings** · Start on Boot · Date & Time · About · Download Labels · Exit to Menu |
+| RetroArch | **RetroArch Settings** · Start on Boot · Date & Time · About · Download Labels · **Use RetroArch** · Exit to Menu |
 
 - As duas páginas têm 7 linhas (hoje são 6). Cabem no ecrã por cima da legenda: 7 × 52 px = 364 px.
 - Com o modo RetroArch ligado, as páginas Screen e Gameplay não aparecem. Os valores delas ficam gravados para quando o modo é desligado.
 - No modo Slot, Start on Boot continua na página Gameplay, como hoje.
-- **Use RetroArch:** On/Off com esquerda/direita, como as outras linhas. A página muda logo e a barra de seleção acompanha a linha Use RetroArch para a sua nova posição.
+- **Use RetroArch:** On/Off com esquerda/direita, como as outras linhas. Fica na mesma linha nos dois modos (decisão do utilizador, 2026-10-12: vê-la saltar para o topo parecia um bug); só as duas primeiras linhas da página mudam.
 - **RetroArch Settings:** A gera um pedido "só o menu".
 
 ### Link no modo RetroArch

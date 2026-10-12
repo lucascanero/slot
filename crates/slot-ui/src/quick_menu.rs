@@ -61,12 +61,12 @@ impl QuickRow {
     ];
 
     pub const RETROARCH: [QuickRow; 7] = [
-        QuickRow::RetroArch,
         QuickRow::RetroArchSettings,
         QuickRow::StartOnBoot,
         QuickRow::DateTime,
         QuickRow::About,
         QuickRow::Labels,
+        QuickRow::RetroArch,
         QuickRow::Exit,
     ];
 
