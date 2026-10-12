@@ -24,11 +24,11 @@ use slot_ui::{
 use crate::audio::Sfx;
 use crate::core_picker::{Chip, CorePicker, Outcome, Press};
 use crate::link_kind::{link_carried, link_kind, serial_option, LinkKind};
-use crate::link_radio::{radio_jobs, LinkRole, RadioJob, RadioJobs};
+use crate::link_radio::{radio_jobs, LinkRole, RadioFail, RadioJob, RadioJobs};
 use crate::link_screen::LinkSprites;
 use crate::link_start::{link_port, LinkFail, LinkProgress, LinkStarter, LinkStep};
 use crate::persist::{self, Snapshot};
-use crate::retroarch::RaRequest;
+use crate::retroarch::{ra_radio, RaLinkUp, RaRadio, RaRequest};
 use crate::video_mode::{self, VideoMode};
 
 pub const INSERT_S: f32 = 0.73;
@@ -296,6 +296,8 @@ pub struct App {
     link_fail_faces: Vec<(TexId, u32, u32)>,
     link_legend_faces: Vec<(TexId, u32)>,
     starting: Option<LinkStarting>,
+    ra_link: Option<(RaLinkUp, RaRequest)>,
+    ra_radio: RaRadio,
     link_transport: Option<(u16, Box<dyn LinkChannel>)>,
     restarting: bool,
     exiting: bool,
@@ -426,6 +428,8 @@ impl App {
             link_fail_faces: Vec::new(),
             link_legend_faces: Vec::new(),
             starting: None,
+            ra_link: None,
+            ra_radio: ra_radio(),
             link_transport: None,
             restarting: false,
             exiting: false,
@@ -1347,6 +1351,9 @@ impl App {
                     self.open_core_picker()
                 }
                 _ if self.core_picker.is_some() => self.core_picker_input(action),
+                Action::GbaDown(Btn::Select) if self.state.use_retroarch => {
+                    self.open_ra_link_menu()
+                }
                 Action::GbaDown(Btn::Up) => self.jump_letter(-1),
                 Action::GbaDown(Btn::Down) => self.jump_letter(1),
                 Action::ShelfLeft | Action::GbaDown(Btn::Left) => self.shelf_mut().hold_left(now),
@@ -1744,6 +1751,7 @@ impl App {
         }
         self.timers();
         self.poll_link();
+        self.poll_ra_link();
         let now = self.now();
         let ready = self.core_faces_ready();
         if let Some(picker) = &mut self.core_picker {
@@ -2931,6 +2939,9 @@ impl App {
                     if let Some(reload) = &mut self.reload {
                         reload.cancelled = true;
                     }
+                    if let Some((up, _)) = &mut self.ra_link {
+                        up.cancel();
+                    }
                 }
             }
             GameMenu::Linked { opened: true, .. } => match action {
@@ -2985,7 +2996,101 @@ impl App {
         })
     }
 
+    pub fn set_ra_radio(&mut self, radio: RaRadio) {
+        self.ra_radio = radio;
+    }
+
+    fn open_ra_link_menu(&mut self) {
+        let Some(root) = self.root.clone() else {
+            return;
+        };
+        let at = self.shelf().index;
+        let Some(cart) = self.shelf_mut().carts.get_mut(at).map(|c| {
+            c.read_header();
+            c.clone()
+        }) else {
+            return;
+        };
+        let core = slot_store::core_for_platform(&root, &cart.stem, cart.platform);
+        let (kind, _) = self.link_mode(&cart.stem);
+        if core == Core::Mgba {
+            if kind == LinkKind::Wireless {
+                self.hud.toast(Toast::NeedsGpsp, self.now());
+                return;
+            }
+            self.link_hardware = LinkKind::Cable;
+        } else {
+            if !link_carried(&cart.code, &cart.title) {
+                self.hud.toast(Toast::NoLink, self.now());
+                return;
+            }
+            self.link_hardware = kind;
+        }
+        self.shelf_mut().release_hold();
+        self.play_held = None;
+        self.radio.ask(RadioJob::Warm);
+        self.game_menu = Some(GameMenu::Pick(self.last_role));
+    }
+
+    fn ra_pick_link(&mut self, role: LinkRow) {
+        let Some(request) = self.front_request(Some(role.role())) else {
+            return self.close_game_menu();
+        };
+        let up = RaLinkUp::spawn(self.ra_radio.clone(), role.role());
+        self.ra_link = Some((up, request));
+        self.game_menu = Some(GameMenu::Working {
+            role,
+            step: LinkStep::Radio,
+            since: self.now(),
+        });
+    }
+
+    fn poll_ra_link(&mut self) {
+        let Some((up, _)) = &mut self.ra_link else {
+            return;
+        };
+        let Some(result) = up.poll() else {
+            return;
+        };
+        let Some((_, request)) = self.ra_link.take() else {
+            return;
+        };
+        let (role, worked) = match self.game_menu {
+            Some(GameMenu::Working { role, since, .. }) => (role, since),
+            _ => (self.last_role, self.now()),
+        };
+        let fail = match result {
+            Ok(()) => {
+                self.game_menu = None;
+                if !self.hand_off(request) {
+                    self.radio.ask(RadioJob::Down);
+                }
+                return;
+            }
+            Err(RadioFail::Cancelled) => {
+                self.radio.ask(RadioJob::Down);
+                self.game_menu = None;
+                return;
+            }
+            Err(RadioFail::NoHost) => LinkFail::NobodyCame,
+            Err(RadioFail::Radio(why)) => {
+                eprintln!("slot: retroarch: link radio: {why}");
+                LinkFail::Radio
+            }
+        };
+        self.radio.ask(RadioJob::Down);
+        self.game_menu = Some(GameMenu::Failed {
+            role,
+            fail,
+            worked,
+            since: self.now(),
+        });
+    }
+
     fn pick_link(&mut self, role: LinkRow) {
+        if self.state.use_retroarch {
+            return self.ra_pick_link(role);
+        }
         let Some(stem) = self.seated().map(str::to_string) else {
             return;
         };
@@ -3065,6 +3170,10 @@ impl App {
         self.game_menu = None;
         if let Some(mut starting) = self.starting.take() {
             starting.starter.cancel();
+        }
+        if let Some((mut up, _)) = self.ra_link.take() {
+            up.cancel();
+            self.radio.ask(RadioJob::Down);
         }
         if !self.link_active() {
             self.radio.ask(RadioJob::Cool);

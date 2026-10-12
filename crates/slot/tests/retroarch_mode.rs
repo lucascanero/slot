@@ -1,16 +1,22 @@
 mod common;
 
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use common::{app_booting_at, tmp_root_with_carts, Clock, CLOCK_IS_SET};
-use slot::app::{App, Phase};
+use slot::app::{App, GameMenu, LinkRow, Phase};
 use slot::core::dylib_name;
+use slot::link_net::Cancel;
+use slot::link_radio::{LinkRole, RadioFail};
+use slot::link_start::LinkFail;
 use slot::retroarch::{RaRequest, RA_BINARY};
 use slot_input::{Action, Btn};
 use slot_store::{
     read_slot_state, write_selected_core, write_slot_state, Core, Layout, Platform, SlotState,
 };
-use slot_ui::{QuickRow, QuickValue};
+use slot_ui::{QuickRow, QuickValue, Toast};
 use tempfile::TempDir;
 
 fn booted_with(d: &Path, state: SlotState) -> (App, Clock) {
@@ -299,4 +305,169 @@ fn slot_mode_still_plays_the_cart_itself() {
     );
     assert!(!a.exiting());
     assert_eq!(RaRequest::read(d.path()), None);
+}
+
+fn settle(a: &mut App) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while matches!(a.game_menu(), Some(GameMenu::Working { .. })) {
+        a.update(1.0 / 60.0);
+        std::thread::sleep(Duration::from_millis(1));
+        assert!(Instant::now() < deadline, "the overlay never left Working");
+    }
+}
+
+fn linked(d: &Path) -> (Option<LinkRole>, Vec<(String, String)>) {
+    match RaRequest::read(d) {
+        Some(RaRequest::Game { link, options, .. }) => (link, options),
+        other => panic!("no game request on the card: {other:?}"),
+    }
+}
+
+#[test]
+fn select_on_a_cart_opens_host_and_join_only_in_retroarch_mode() {
+    let (_d, mut a, _) = on_carousel(true);
+    a.apply(Action::GbaDown(Btn::Select));
+    assert_eq!(a.game_menu(), Some(GameMenu::Pick(LinkRow::Host)));
+    let (_d, mut slot_mode, _) = on_carousel(false);
+    slot_mode.apply(Action::GbaDown(Btn::Select));
+    assert_eq!(slot_mode.game_menu(), None, "Slot mode's shelf changed");
+}
+
+#[test]
+fn host_brings_the_radio_up_then_hands_off_with_the_link() {
+    let (d, mut a, _) = on_carousel(true);
+    install_retroarch(d.path());
+    a.set_ra_radio(Arc::new(|role, _: &Cancel| {
+        assert_eq!(role, LinkRole::Host);
+        Ok(())
+    }));
+    a.apply(Action::GbaDown(Btn::Select));
+    press(&mut a, Btn::A);
+    assert!(matches!(a.game_menu(), Some(GameMenu::Working { .. })));
+    settle(&mut a);
+    assert!(a.exiting(), "slot never left for RetroArch");
+    assert_eq!(a.game_menu(), None);
+    let (link, options) = linked(d.path());
+    assert_eq!(link, Some(LinkRole::Host));
+    assert_eq!(
+        options,
+        slot::retroarch::link_options(Core::Mgba, LinkRole::Host, "auto")
+    );
+}
+
+#[test]
+fn join_is_player_one() {
+    let (d, mut a, _) = on_carousel(true);
+    install_retroarch(d.path());
+    a.set_ra_radio(Arc::new(|_, _: &Cancel| Ok(())));
+    a.apply(Action::GbaDown(Btn::Select));
+    press(&mut a, Btn::Right);
+    press(&mut a, Btn::A);
+    settle(&mut a);
+    let (link, options) = linked(d.path());
+    assert_eq!(link, Some(LinkRole::Join));
+    assert!(
+        options.contains(&("mgba_link_player".to_string(), "1".to_string())),
+        "{options:?}"
+    );
+}
+
+#[test]
+fn a_join_with_no_host_shows_the_failure_and_slot_stays() {
+    let (d, mut a, _) = on_carousel(true);
+    install_retroarch(d.path());
+    a.set_ra_radio(Arc::new(|_, _: &Cancel| Err(RadioFail::NoHost)));
+    a.apply(Action::GbaDown(Btn::Select));
+    press(&mut a, Btn::Right);
+    press(&mut a, Btn::A);
+    settle(&mut a);
+    assert!(
+        matches!(
+            a.game_menu(),
+            Some(GameMenu::Failed {
+                fail: LinkFail::NobodyCame,
+                ..
+            })
+        ),
+        "{:?}",
+        a.game_menu()
+    );
+    assert!(!a.exiting());
+    assert_eq!(RaRequest::read(d.path()), None);
+    press(&mut a, Btn::A);
+    assert_eq!(a.game_menu(), None, "OK did not close the failure");
+}
+
+#[test]
+fn b_while_the_radio_comes_up_cancels_without_handing_off() {
+    let (d, mut a, _) = on_carousel(true);
+    install_retroarch(d.path());
+    a.set_ra_radio(Arc::new(|_, cancel: &Cancel| {
+        while !cancel.is_cancelled() {
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        Err(RadioFail::Cancelled)
+    }));
+    a.apply(Action::GbaDown(Btn::Select));
+    press(&mut a, Btn::A);
+    press(&mut a, Btn::B);
+    settle(&mut a);
+    assert_eq!(a.game_menu(), None);
+    assert!(!a.exiting());
+    assert_eq!(RaRequest::read(d.path()), None);
+}
+
+#[test]
+fn with_retroarch_missing_a_link_is_refused_before_the_radio_comes_up() {
+    let (d, mut a, _) = on_carousel(true);
+    let asked = Arc::new(AtomicBool::new(false));
+    let flag = asked.clone();
+    a.set_ra_radio(Arc::new(move |_, _: &Cancel| {
+        flag.store(true, Ordering::SeqCst);
+        Ok(())
+    }));
+    a.apply(Action::GbaDown(Btn::Select));
+    press(&mut a, Btn::A);
+    std::thread::sleep(Duration::from_millis(20));
+    a.update(1.0 / 60.0);
+    assert_eq!(a.game_menu(), None);
+    assert!(a.refusal_active(a.now()));
+    assert!(
+        !asked.load(Ordering::SeqCst),
+        "the radio came up for nothing"
+    );
+    assert_eq!(RaRequest::read(d.path()), None);
+}
+
+#[test]
+fn gpsp_on_a_cart_with_no_link_says_so() {
+    let (d, mut a, _) = on_carousel(true);
+    write_selected_core(d.path(), "Emerald", Core::Gpsp).unwrap();
+    a.apply(Action::GbaDown(Btn::Select));
+    assert_eq!(a.game_menu(), None);
+    assert_eq!(a.toast(), Some(Toast::NoLink));
+}
+
+#[test]
+fn mgba_on_a_wireless_adapter_cart_says_to_use_gpsp() {
+    let (d, mut a, _) = on_carousel(true);
+    common::write_retail_header(&d, "Emerald", "POKEMON EMER", "BPEE");
+    a.apply(Action::GbaDown(Btn::Select));
+    assert_eq!(a.game_menu(), None);
+    assert_eq!(a.toast(), Some(Toast::NeedsGpsp));
+}
+
+#[test]
+fn gpsp_on_a_link_cart_carries_the_serial_slot_would_use() {
+    let (d, mut a, _) = on_carousel(true);
+    install_retroarch(d.path());
+    common::write_retail_header(&d, "Emerald", "POKEMON EMER", "BPEE");
+    write_selected_core(d.path(), "Emerald", Core::Gpsp).unwrap();
+    a.set_ra_radio(Arc::new(|_, _: &Cancel| Ok(())));
+    a.apply(Action::GbaDown(Btn::Select));
+    press(&mut a, Btn::A);
+    settle(&mut a);
+    let (_, options) = linked(d.path());
+    let want = a.link_mode("Emerald").1;
+    assert_eq!(options, vec![("gpsp_serial".to_string(), want.to_string())]);
 }
