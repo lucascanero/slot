@@ -77,6 +77,7 @@ tasks:
       - sh card/test-slotlink.sh
       - sh card/test-coresave.sh
       - sh card/test-launch.sh
+      - sh card/test-launch-retroarch.sh
       - sh card/test-boot.sh
       - sh card/test-suspend.sh
       - sh card/test-retroarch.sh
