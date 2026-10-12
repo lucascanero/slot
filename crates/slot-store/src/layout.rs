@@ -15,6 +15,7 @@ pub struct Layout {
     app: PathBuf,
     bios: Vec<PathBuf>,
     boot_hook: PathBuf,
+    retroarch: PathBuf,
     flat: bool,
 }
 
@@ -28,6 +29,7 @@ impl Layout {
             app: root.join("System"),
             bios: vec![root.join("BIOS")],
             boot_hook: root.join(BOOT_HOOK_DIR).join(BOOT_HOOK_NAME),
+            retroarch: root.join("RetroArch"),
             flat: true,
         }
     }
@@ -44,6 +46,7 @@ impl Layout {
                 data.join("BIOS"),
             ],
             boot_hook: sd.join(BOOT_HOOK_DIR).join(BOOT_HOOK_NAME),
+            retroarch: sd.join("RetroArch"),
             data,
             flat: false,
         }
@@ -96,6 +99,10 @@ impl Layout {
 
     pub fn boot_script(&self) -> PathBuf {
         self.app.join("boot").join(BOOT_HOOK_NAME)
+    }
+
+    pub fn retroarch(&self) -> &Path {
+        &self.retroarch
     }
 }
 

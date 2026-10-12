@@ -439,6 +439,12 @@ fn a_card_from_before_retroarch_mode_reads_it_as_off() {
         .collect();
     std::fs::write(&path, old).unwrap();
     let back = read_slot_state(d.path());
-    assert!(!back.use_retroarch, "an old card came back in RetroArch mode");
-    assert_eq!(back.brightness, 7, "the rest of an old card was thrown away");
+    assert!(
+        !back.use_retroarch,
+        "an old card came back in RetroArch mode"
+    );
+    assert_eq!(
+        back.brightness, 7,
+        "the rest of an old card was thrown away"
+    );
 }

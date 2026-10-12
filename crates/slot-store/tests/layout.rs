@@ -77,3 +77,15 @@ fn the_stock_rom_folders_feed_the_shelf_and_nothing_else_does() {
     want.sort();
     assert_eq!(roms, want);
 }
+
+#[test]
+fn stockmix_finds_retroarch_at_the_root_of_the_card() {
+    let l = Layout::stockmix(Path::new("/mnt/SDCARD"), Path::new("/mnt/SDCARD/Apps/Slot"));
+    assert_eq!(l.retroarch(), Path::new("/mnt/SDCARD/RetroArch"));
+}
+
+#[test]
+fn flat_keeps_a_retroarch_folder_in_its_root() {
+    let l = Layout::flat(Path::new("/card"));
+    assert_eq!(l.retroarch(), Path::new("/card/RetroArch"));
+}
