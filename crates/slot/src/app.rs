@@ -28,6 +28,7 @@ use crate::link_radio::{radio_jobs, LinkRole, RadioJob, RadioJobs};
 use crate::link_screen::LinkSprites;
 use crate::link_start::{link_port, LinkFail, LinkProgress, LinkStarter, LinkStep};
 use crate::persist::{self, Snapshot};
+use crate::retroarch::RaRequest;
 use crate::video_mode::{self, VideoMode};
 
 pub const INSERT_S: f32 = 0.73;
@@ -1434,6 +1435,7 @@ impl App {
             QuickRow::About => self.phase = Phase::About,
             QuickRow::Exit => self.begin_exit(),
             QuickRow::Labels => self.label_request = true,
+            QuickRow::RetroArchSettings => self.hand_off_menu(),
             QuickRow::Screen | QuickRow::Game => {
                 if let Some(row) = row.child() {
                     self.phase = Phase::QuickMenu { row };
@@ -1450,8 +1452,7 @@ impl App {
             | QuickRow::GbPalettes
             | QuickRow::StartOnBoot
             | QuickRow::Rumble
-            | QuickRow::RetroArch
-            | QuickRow::RetroArchSettings => {}
+            | QuickRow::RetroArch => {}
         }
     }
 
@@ -2584,6 +2585,13 @@ impl App {
         if !self.on_shelf() {
             return;
         }
+        if self.state.use_retroarch {
+            self.play_held = None;
+            if let Some(request) = self.front_request(None) {
+                self.hand_off(request);
+            }
+            return;
+        }
         let at = self.shelf().index;
         let Some(cart) = self.shelf_mut().carts.get_mut(at).map(|c| {
             c.read_header();
@@ -3139,6 +3147,72 @@ impl App {
         self.flush_resume();
         self.exiting = true;
         self.act_at = self.now() + SHUTDOWN_SHOW_MS;
+    }
+
+    fn front_request(&mut self, link: Option<LinkRole>) -> Option<RaRequest> {
+        let root = self.root.clone()?;
+        let at = self.shelf().index;
+        let cart = self.shelf_mut().carts.get_mut(at).map(|c| {
+            c.read_header();
+            c.clone()
+        })?;
+        let core = slot_store::core_for_platform(&root, &cart.stem, cart.platform);
+        let serial = self.link_mode(&cart.stem).1;
+        let layout = slot_store::Layout::for_root(&root);
+        match crate::retroarch::game_request(&layout, &cart, core, link.map(|role| (role, serial)))
+        {
+            Ok(request) => Some(request),
+            Err(missing) => {
+                eprintln!("slot: retroarch: {}: {missing}", cart.stem);
+                self.refuse();
+                None
+            }
+        }
+    }
+
+    fn hand_off_menu(&mut self) {
+        let Some(root) = self.root.clone() else {
+            return;
+        };
+        match crate::retroarch::menu_request(&slot_store::Layout::for_root(&root)) {
+            Ok(request) => {
+                self.hand_off(request);
+            }
+            Err(missing) => {
+                eprintln!("slot: retroarch: {missing}");
+                self.refuse();
+            }
+        }
+    }
+
+    fn hand_off(&mut self, request: RaRequest) -> bool {
+        let Some(root) = self.root.clone() else {
+            return false;
+        };
+        if let Err(e) = request.write(&root) {
+            eprintln!("slot: retroarch: could not write the request: {e}");
+            self.card_failing.store(true, Ordering::Relaxed);
+            self.refuse();
+            return false;
+        }
+        eprintln!("slot: retroarch: handing over to RetroArch");
+        self.remember_front();
+        self.begin_exit();
+        true
+    }
+
+    fn remember_front(&mut self) {
+        let front = self
+            .shelf()
+            .carts
+            .get(self.shelf().index)
+            .map(|c| (c.stem.clone(), c.platform));
+        let Some((stem, platform)) = front else {
+            return;
+        };
+        self.state.cart = Some(stem);
+        self.state.cart_platform = Some(platform);
+        self.persist();
     }
 
     fn begin_power_off(&mut self) {
