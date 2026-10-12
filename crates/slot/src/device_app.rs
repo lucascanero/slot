@@ -149,6 +149,7 @@ pub fn run() {
             eprintln!("slot: {e}");
             return;
         }
+        frontend.keep_screen();
         let swap_took = swap.elapsed();
         slot::latency::swapped(swap_took.as_secs_f64() * 1000.0);
         let dropped = pacer.swapped(work, swap_took > Duration::from_millis(1));

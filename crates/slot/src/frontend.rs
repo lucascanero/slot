@@ -632,6 +632,28 @@ impl Frontend {
         self.session.app().ready_to_exit()
     }
 
+    pub fn keep_screen(&mut self) {
+        if !self.session.app_mut().take_capture() {
+            return;
+        }
+        let Some(dir) = self
+            .session
+            .app()
+            .root()
+            .map(|root| root.join(crate::loading::LOADING_DIR))
+        else {
+            return;
+        };
+        let fb = std::path::Path::new(crate::loading::FB);
+        let sys = std::path::Path::new(crate::loading::FB_SYS);
+        let kept = crate::loading::read_screen(fb, sys)
+            .and_then(|(w, h, rgba)| crate::loading::write_background(&dir, w, h, &rgba));
+        match kept {
+            Ok(()) => eprintln!("slot: retroarch: kept the screen for RetroArch's loading"),
+            Err(e) => eprintln!("slot: retroarch: could not keep the screen: {e}"),
+        }
+    }
+
     pub fn exit(&mut self) {
         self.session.app_mut().exit();
     }

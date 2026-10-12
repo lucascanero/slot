@@ -367,6 +367,17 @@ fn hand_over(a: &mut App) {
     panic!("slot never handed the cart over: {:?}", a.phase());
 }
 
+fn badge(a: &App) -> bool {
+    let mut out = Vec::new();
+    a.draw(&mut out);
+    let (cx, cy) = slot::loading::centre();
+    let (bw, bh) = slot::loading::BADGE;
+    out.iter().any(|d| {
+        matches!(*d, Draw::Rect { x, y, w, h, colour }
+            if [x, y, w, h] == [cx - bw, cy - bh, 2.0 * bw, 2.0 * bh] && colour[3] == 1.0)
+    })
+}
+
 fn covered(a: &App) -> bool {
     let mut out = Vec::new();
     a.draw(&mut out);
@@ -381,27 +392,55 @@ fn covered(a: &App) -> bool {
 fn exit_screen(a: &App) -> bool {
     let mut out = Vec::new();
     a.draw(&mut out);
-    out.iter().any(|d| {
-        matches!(*d, Draw::Rect { x, y, w, h, colour }
-            if [x, y, w, h] == [0.0, 0.0, OUT_W as f32, OUT_H as f32]
-                && colour == [0.0, 0.0, 0.0, 1.0])
-    })
+    out.len() <= 2
+        && out.first().is_some_and(|d| {
+            matches!(*d, Draw::Rect { x, y, w, h, colour }
+                if [x, y, w, h] == [0.0, 0.0, OUT_W as f32, OUT_H as f32]
+                    && colour == [0.0, 0.0, 0.0, 1.0])
+        })
 }
 
 #[test]
-fn the_cart_slides_in_then_slots_loading_screen_covers_it_until_slot_leaves() {
+fn the_cart_slides_in_and_slots_loading_badge_sits_on_it_until_slot_leaves() {
     let (d, mut a, _) = on_carousel(true);
     install_retroarch(d.path());
     a.apply(Action::Insert);
-    assert!(
-        !covered(&a),
-        "the loading screen hid the cart before it went in"
-    );
+    assert!(!badge(&a), "the loading showed before the cart went in");
     hand_over(&mut a);
-    assert!(covered(&a), "slot left without its loading screen up");
+    assert!(badge(&a), "slot left without its loading badge up");
+    assert!(!covered(&a), "the loading hid the seated cart");
     assert!(
         !exit_screen(&a),
         "the black exit screen flashed between the cart and RetroArch"
+    );
+}
+
+#[test]
+fn a_cart_hand_over_asks_for_the_screen_to_be_kept_for_retroarch() {
+    let (d, mut a, _) = on_carousel(true);
+    install_retroarch(d.path());
+    a.apply(Action::Insert);
+    hand_over(&mut a);
+    let asked: Vec<bool> = (0..4).map(|_| a.take_capture()).collect();
+    assert_eq!(
+        asked,
+        [false, true, false, false],
+        "the screen is kept once, the frame after the badge is fully up"
+    );
+}
+
+#[test]
+fn retroarch_settings_keeps_no_screen_but_still_shows_the_badge() {
+    let (d, mut a, _) = on_carousel(true);
+    install_retroarch(d.path());
+    walk_to(&mut a, QuickRow::RetroArchSettings);
+    press(&mut a, Btn::A);
+    assert!(a.exiting());
+    assert!(badge(&a), "RetroArch Settings left with no loading badge");
+    assert!(!exit_screen(&a));
+    assert!(
+        (0..4).all(|_| !a.take_capture()),
+        "the menu kept a screen nobody shows"
     );
 }
 

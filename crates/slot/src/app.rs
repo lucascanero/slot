@@ -308,6 +308,7 @@ pub struct App {
     ra_radio: RaRadio,
     handing: Option<RaRequest>,
     handed_over: bool,
+    capture_in: Option<u8>,
     link_transport: Option<(u16, Box<dyn LinkChannel>)>,
     restarting: bool,
     exiting: bool,
@@ -442,6 +443,7 @@ impl App {
             ra_radio: ra_radio(),
             handing: None,
             handed_over: false,
+            capture_in: None,
             link_transport: None,
             restarting: false,
             exiting: false,
@@ -2120,11 +2122,7 @@ impl App {
             self.draw_power_menu(index, out);
             return;
         }
-        if self.handed_over {
-            crate::loading::draw(crate::loading::lit_at(self.now()), 1.0, out);
-            return;
-        }
-        if self.shutting_down() {
+        if self.shutting_down() && !self.handed_over {
             out.push(Draw::Rect {
                 x: 0.0,
                 y: 0.0,
@@ -2257,6 +2255,9 @@ impl App {
         }
         if let Some(menu) = self.game_menu {
             self.draw_game_menu(menu, out);
+        }
+        if self.handed_over && !matches!(self.phase, Phase::Handing { .. }) {
+            crate::loading::draw(crate::loading::lit_at(self.now()), 1.0, out);
         }
         self.hud.draw(self.now(), out);
     }
@@ -3379,10 +3380,27 @@ impl App {
             return false;
         }
         eprintln!("slot: retroarch: handing over to RetroArch");
+        if matches!(request, RaRequest::Game { .. }) {
+            self.capture_in = Some(2);
+        }
         self.remember_front();
         self.handed_over = true;
         self.begin_exit();
         true
+    }
+
+    pub fn take_capture(&mut self) -> bool {
+        match self.capture_in {
+            Some(n) if n > 1 => {
+                self.capture_in = Some(n - 1);
+                false
+            }
+            Some(_) => {
+                self.capture_in = None;
+                true
+            }
+            None => false,
+        }
     }
 
     fn remember_front(&mut self) {
